@@ -545,6 +545,61 @@ async function refreshHostedSocketAdmission(targetSocket, config) {
 }
 
 /**
+ * Ends the live connections of a sealed Board Session on their read-only
+ * completion state: every socket is demoted to a read-only connection and
+ * re-emitted its authoritative board state carrying the `eventClosed` marker,
+ * so participants finish viewing the drained board but can never regain write
+ * access through the old socket, page, or mutations. Connections stay open —
+ * a reconnect is refused by admission and routes back to the event page,
+ * which explains the completed event.
+ *
+ * @param {string} boardName
+ * @param {ServerConfig} config
+ * @returns {Promise<void>}
+ */
+async function notifyBoardSessionClosed(boardName, config) {
+  const boardPromise = getLoadedBoard(boardName);
+  if (!boardPromise) return;
+  const board = await boardPromise;
+  for (const target of [...activeSockets.values()]) {
+    const admission = target.hostedEventAdmission;
+    if (!admission || admission.boardName !== boardName) continue;
+    if (!target.rooms.has(boardName)) continue;
+    target.hostedBoardRole = "reader";
+    target.boardPermissionContext = undefined;
+    const user = getBoardUserMap(boardName).get(target.id);
+    if (user) {
+      user.canEdit = false;
+      user.canClear = false;
+      user.canBan = false;
+      user.canGrantTemporaryModerator = false;
+      emitUserUpdatedToBoard(target, boardName, user);
+    }
+    target.emit(SocketEvents.BOARDSTATE, {
+      ...boardStateForSocket(config, board, target),
+      eventClosed: true,
+    });
+  }
+}
+
+/**
+ * Registers the real-time Board Session close effects with the Hosted Event
+ * Module: when the close pipeline seals a session, its live sockets end on
+ * the read-only completion state through {@link notifyBoardSessionClosed}.
+ *
+ * @param {ServerConfig} config
+ * @param {{enabled: boolean, registerBoardCloseEffects?: (effects: {notifyBoardClosed: (boardName: string) => Promise<void>}) => void} | undefined} hostedEventModule
+ * @returns {void}
+ */
+function registerCloseEffects(config, hostedEventModule) {
+  if (hostedEventModule?.enabled !== true) return;
+  hostedEventModule.registerBoardCloseEffects?.({
+    notifyBoardClosed: (boardName) =>
+      notifyBoardSessionClosed(boardName, config),
+  });
+}
+
+/**
  * Registers the socket layer's moderation effects: the real-time
  * consequences of hosted governance decisions. Registered once per IO start
  * so hosted routes can evict banned accounts and refresh revoked moderators
@@ -602,6 +657,9 @@ async function startIO(app, config, runtime) {
   // Real-time moderation effects (evictions, access refreshes) are applied
   // through this registry by the hosted governance routes and handlers.
   registerModerationEffects(config);
+  // Board Session close effects: sealed sessions end their live sockets on a
+  // read-only completion state instead of stranding them mid-draw.
+  registerCloseEffects(config, runtime.hostedEventModule);
   io.use(
     (
       /** @type {AppSocket} */ socket,
@@ -1252,6 +1310,17 @@ export const __test = {
     /** @type {ServerConfig} */ config,
   ) {
     registerModerationEffects(config);
+  },
+  /**
+   * Test seam: registers the production Board Session close effects against a
+   * hosted module so close tests exercise the real read-only completion
+   * notification through handleSocketConnection sockets.
+   */
+  registerCloseEffects: function registerCloseEffectsForTest(
+    /** @type {ServerConfig} */ config,
+    /** @type {{enabled: boolean, registerBoardCloseEffects?: (effects: {notifyBoardClosed: (boardName: string) => Promise<void>}) => void} | undefined} */ hostedEventModule,
+  ) {
+    registerCloseEffects(config, hostedEventModule);
   },
   buildBoardUserRecord: function buildBoardUserRecordForTest(
     /** @type {AppSocket} */ socket,

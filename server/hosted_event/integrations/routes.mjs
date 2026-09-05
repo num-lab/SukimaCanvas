@@ -37,6 +37,7 @@ const MAX_JSON_BODY_BYTES = 16 * 1024;
  *   membershipStore: ReturnType<typeof import("../memberships/store.mjs").createFileEventMembershipStore>,
  *   integrationStore: ReturnType<typeof import("./store.mjs").createFileIntegrationStore>,
  *   limiter: ReturnType<typeof import("../accounts/rate_limits.mjs").createRateLimiter>,
+ *   advanceEventLifecycle?: () => Promise<void>,
  * }} dependencies
  */
 function createIntegrationRoutes(dependencies) {
@@ -151,17 +152,21 @@ function createIntegrationRoutes(dependencies) {
   }
 
   /**
-   * Lazily advances the durable Board Session lifecycle so the API reports
-   * and admission decides on the authoritative status.
+   * Lazily advances the durable Board Session lifecycle and runs the close
+   * pipeline, so the API reports and admission decide on the authoritative
+   * status. The composed module injects the full refresh (including closes);
+   * the standalone default only advances the lifecycle.
    *
    * @returns {Promise<void>}
    */
-  async function advanceLifecycleNow() {
-    await organizerStore.advanceLifecycle({
-      now: clock(),
-      closeDrainMs: config.HOSTED_BOARD_SESSION_CLOSE_DRAIN_MS,
+  const advanceLifecycleNow =
+    dependencies.advanceEventLifecycle ||
+    (async () => {
+      await organizerStore.advanceLifecycle({
+        now: clock(),
+        closeDrainMs: config.HOSTED_BOARD_SESSION_CLOSE_DRAIN_MS,
+      });
     });
-  }
 
   // --- organizer backend API ------------------------------------------------
 

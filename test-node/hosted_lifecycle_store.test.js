@@ -88,7 +88,7 @@ async function approveReservation(store, organizerId, now, fields) {
   };
 }
 
-test("advanceLifecycle moves a session scheduled -> open -> closing -> closed by time", async () => {
+test("advanceLifecycle moves a session scheduled -> open -> closing by time; the close pipeline seals it", async () => {
   const holder = { now: 1_000_000 };
   const store = makeStore(await createDataDir(), holder);
   const organizerId = await setupOrganizer(store);
@@ -133,15 +133,124 @@ test("advanceLifecycle moves a session scheduled -> open -> closing -> closed by
   await store.advanceLifecycle({ now: end, closeDrainMs: DRAIN });
   assert.equal(status(), "closing"); // drain not elapsed yet
 
-  holder.now = end + DRAIN;
-  await store.advanceLifecycle({ now: end + DRAIN, closeDrainMs: DRAIN });
-  assert.equal(status(), "closed");
+  // Time alone never seals a session: the close pipeline does, after the
+  // archive succeeded. Until then the session keeps draining.
+  assert.deepEqual(
+    await store.advanceLifecycle({ now: end + DRAIN, closeDrainMs: DRAIN }),
+    [],
+  );
+  assert.equal(status(), "closing");
+  assert.deepEqual(
+    store.listBoardSessionsDueToClose({ now: end + 1, closeDrainMs: DRAIN }),
+    [],
+  );
+  const due = store.listBoardSessionsDueToClose({
+    now: end + DRAIN,
+    closeDrainMs: DRAIN,
+  });
+  assert.equal(due.length, 1);
+  assert.ok(due[0]?.boardName.startsWith("event-"));
 
-  // Terminal: no further transitions.
+  // Sealing is guarded: only a draining session with a real archive seals.
+  assert.deepEqual(
+    await store.markBoardSessionClosed({
+      boardSessionId: due[0]?.boardSessionId ?? "",
+      archiveKey: "",
+      finalSeq: 3,
+      archivedAtMs: end + DRAIN,
+    }),
+    { ok: false, reason: "invalid_archive" },
+  );
+  assert.deepEqual(
+    await store.markBoardSessionClosed({
+      boardSessionId: "missing",
+      archiveKey: "board-archives/x/manifest.json",
+      finalSeq: 3,
+      archivedAtMs: end + DRAIN,
+    }),
+    { ok: false, reason: "not_found" },
+  );
+  assert.ok(
+    (
+      await store.markBoardSessionClosed({
+        boardSessionId: due[0]?.boardSessionId ?? "",
+        archiveKey: `board-archives/${due[0]?.boardSessionId}/manifest.json`,
+        finalSeq: 3,
+        archivedAtMs: end + DRAIN,
+      })
+    ).ok,
+  );
+  assert.equal(status(), "closed");
+  const sealed = store.getBoardSessionForReservation(reservationId);
+  assert.equal(sealed?.archivedFinalSeq, 3);
+  assert.equal(
+    sealed?.archiveKey,
+    `board-archives/${sealed?.boardSessionId}/manifest.json`,
+  );
+  // Terminal: no further transitions, no second seal, no more close work.
   assert.deepEqual(
     await store.advanceLifecycle({ now: end + 10 * HOUR, closeDrainMs: DRAIN }),
     [],
   );
+  assert.deepEqual(
+    await store.markBoardSessionClosed({
+      boardSessionId: due[0]?.boardSessionId ?? "",
+      archiveKey: "board-archives/again/manifest.json",
+      finalSeq: 4,
+      archivedAtMs: end + DRAIN,
+    }),
+    { ok: false, reason: "not_closing" },
+  );
+  assert.deepEqual(
+    store.listBoardSessionsDueToClose({
+      now: end + 10 * HOUR,
+      closeDrainMs: DRAIN,
+    }),
+    [],
+  );
+  const audit = store
+    .listAuditForOrganizer(organizerId)
+    .filter((record) => record.subjectType === "board_session");
+  assert.ok(
+    audit.some(
+      (record) =>
+        record.action === "board_session.closed" &&
+        record.subjectId === due[0]?.boardSessionId,
+    ),
+  );
+});
+
+test("a failed archive keeps the session draining and auditable", async () => {
+  const holder = { now: 1_000_000 };
+  const store = makeStore(await createDataDir(), holder);
+  const organizerId = await setupOrganizer(store);
+  const start = holder.now + HOUR;
+  const end = start + HOUR;
+  const { reservationId } = await approveReservation(
+    store,
+    organizerId,
+    holder.now,
+    {
+      startsAtMs: start,
+      endsAtMs: end,
+      seats: 20,
+    },
+  );
+  holder.now = start;
+  await store.advanceLifecycle({ now: start, closeDrainMs: DRAIN });
+  holder.now = end;
+  await store.advanceLifecycle({ now: end, closeDrainMs: DRAIN });
+  await store.recordBoardSessionArchiveFailed({
+    boardSessionId:
+      store.getBoardSessionForReservation(reservationId)?.boardSessionId ?? "",
+  });
+  const session = store.getBoardSessionForReservation(reservationId);
+  assert.equal(session?.status, "closing");
+  assert.equal(session?.archiveKey, null);
+  const failures = store
+    .listAuditForOrganizer(organizerId)
+    .filter((record) => record.action === "board_session.archive_failed");
+  assert.equal(failures.length, 1);
 });
 
 test("interrupted lifecycle work resumes after a restart and catches up", async () => {
@@ -166,7 +275,9 @@ test("interrupted lifecycle work resumes after a restart and catches up", async 
   await store.advanceLifecycle({ now: start, closeDrainMs: DRAIN });
   await store.flush();
 
-  // A fresh instance, well past the end + drain, catches up in one pass.
+  // A fresh instance, well past the end + drain, catches the lifecycle up in
+  // one pass — but stops at closing, waiting for the close pipeline to seal
+  // it behind the archive.
   const later = { now: end + DRAIN + HOUR };
   const reloaded = makeStore(dataDir, later);
   const transitions = await reloaded.advanceLifecycle({
@@ -175,16 +286,35 @@ test("interrupted lifecycle work resumes after a restart and catches up", async 
   });
   assert.deepEqual(
     transitions.map((t) => t.to),
-    ["closing", "closed"],
+    ["closing"],
   );
   assert.equal(
     reloaded.getBoardSessionForReservation(reservationId)?.status,
-    "closed",
+    "closing",
   );
   // Re-running after recovery is a no-op (no duplicate transitions).
   assert.deepEqual(
     await reloaded.advanceLifecycle({ now: later.now, closeDrainMs: DRAIN }),
     [],
+  );
+  const due = reloaded.listBoardSessionsDueToClose({
+    now: later.now,
+    closeDrainMs: DRAIN,
+  });
+  assert.equal(due.length, 1);
+  assert.ok(
+    (
+      await reloaded.markBoardSessionClosed({
+        boardSessionId: due[0]?.boardSessionId ?? "",
+        archiveKey: `board-archives/${due[0]?.boardSessionId}/manifest.json`,
+        finalSeq: 0,
+        archivedAtMs: later.now,
+      })
+    ).ok,
+  );
+  assert.equal(
+    reloaded.getBoardSessionForReservation(reservationId)?.status,
+    "closed",
   );
 });
 

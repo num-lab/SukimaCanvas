@@ -75,6 +75,7 @@ const CHANGE_KIND_LABEL_KEYS = {
  *   organizerStore: ReturnType<typeof import("../organizers/store.mjs").createFileOrganizerStore>,
  *   limiter: ReturnType<typeof import("../accounts/rate_limits.mjs").createRateLimiter>,
  *   operatorEmails: Set<string>,
+ *   advanceEventLifecycle?: () => Promise<void>,
  *   templates: {
  *     organizerReservations: HostedTemplate,
  *     organizerReservation: HostedTemplate,
@@ -107,15 +108,19 @@ function createReservationRoutes(dependencies) {
   });
 
   /**
-   * Lazily runs the durable lifecycle advancement so any page or decision that
-   * reads Board Session state sees the authoritative status at the current
-   * service clock. Idempotent, so calling it on every read is safe.
+   * Lazily runs the durable lifecycle advancement and the Board Session close
+   * pipeline, so any page or decision that reads Board Session state sees the
+   * authoritative status at the current service clock. Idempotent, so calling
+   * it on every read is safe. The composed module injects the full refresh
+   * (including closes); the standalone default only advances the lifecycle.
    *
    * @returns {Promise<void>}
    */
-  async function advanceLifecycleNow() {
-    await organizerStore.advanceLifecycle({ now: clock(), closeDrainMs });
-  }
+  const advanceLifecycleNow =
+    dependencies.advanceEventLifecycle ||
+    (async () => {
+      await organizerStore.advanceLifecycle({ now: clock(), closeDrainMs });
+    });
 
   /**
    * @param {HttpRouteContext} ctx

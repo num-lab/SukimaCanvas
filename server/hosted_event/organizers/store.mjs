@@ -166,8 +166,10 @@ function eventLifecycleState(event, now) {
 /**
  * The authoritative Board Session lifecycle advanced by durable background work.
  * `scheduled` before the event's start, `open` while it runs, `closing` while
- * accepted writes drain, `closed` once the session is sealed, and `cancelled`
- * when a future event is withdrawn. `closed` and `cancelled` are terminal.
+ * accepted writes drain, `closed` once the session is sealed behind a Private
+ * Board Archive, and `cancelled` when a future event is withdrawn. `closed` and
+ * `cancelled` are terminal: a closed session can never be re-edited or
+ * reopened, and further creation needs a new Board Session.
  *
  * @typedef {"scheduled" | "open" | "closing" | "closed" | "cancelled"} BoardSessionStatus
  */
@@ -188,6 +190,9 @@ function eventLifecycleState(event, now) {
  *   closingAtMs: number | null,
  *   closedAtMs: number | null,
  *   cancelledAtMs: number | null,
+ *   archiveKey: string | null,
+ *   archivedAtMs: number | null,
+ *   archivedFinalSeq: number | null,
  * }} StoredBoardSession
  */
 /**
@@ -389,6 +394,11 @@ function createFileOrganizerStore(options) {
     if (session.closingAtMs === undefined) session.closingAtMs = null;
     if (session.closedAtMs === undefined) session.closedAtMs = null;
     if (session.cancelledAtMs === undefined) session.cancelledAtMs = null;
+    if (session.archiveKey === undefined) session.archiveKey = null;
+    if (session.archivedAtMs === undefined) session.archivedAtMs = null;
+    if (session.archivedFinalSeq === undefined) {
+      session.archivedFinalSeq = null;
+    }
   }
 
   function ensureLoaded() {
@@ -1605,6 +1615,9 @@ function createFileOrganizerStore(options) {
       closingAtMs: null,
       closedAtMs: null,
       cancelledAtMs: null,
+      archiveKey: null,
+      archivedAtMs: null,
+      archivedFinalSeq: null,
     });
     reservation.status = "approved";
     reservation.decidedAtMs = now;
@@ -1682,12 +1695,15 @@ function createFileOrganizerStore(options) {
    * Durable, idempotent lifecycle advancement — the authoritative background
    * work that moves Board Sessions forward, not an in-process timer. Each
    * non-terminal session is advanced to the state its own start/end times imply
-   * at `now`: `scheduled → open` at start, `open → closing` at end, and
-   * `closing → closed` after the drain window. Every transition is guarded by
-   * the current status, so running the same `now` twice (or catching up after a
-   * restart that skipped the exact moment) never double-transitions or produces
-   * a contradictory state. Returns the transitions applied so callers can log
-   * observable lifecycle progress.
+   * at `now`: `scheduled → open` at start and `open → closing` at end. The
+   * `closing → closed` seal is deliberately NOT a time transition: it happens
+   * only after the close pipeline drained accepted writes, validated the final
+   * sequence, and archived the board, so a failed or unfinished archive never
+   * masquerades as a closed session. Every transition is guarded by the
+   * current status, so running the same `now` twice (or catching up after a
+   * restart that skipped the exact moment) never double-transitions or
+   * produces a contradictory state. Returns the transitions applied so callers
+   * can log observable lifecycle progress.
    *
    * @param {{now: number, closeDrainMs?: number}} input
    * @returns {Promise<{boardSessionId: string, from: BoardSessionStatus, to: BoardSessionStatus}[]>}
@@ -1695,11 +1711,6 @@ function createFileOrganizerStore(options) {
   async function advanceLifecycle(input) {
     ensureLoaded();
     const now = input.now;
-    const closeDrainMs =
-      typeof input.closeDrainMs === "number" &&
-      Number.isFinite(input.closeDrainMs)
-        ? Math.max(0, input.closeDrainMs)
-        : 0;
     /** @type {{boardSessionId: string, from: BoardSessionStatus, to: BoardSessionStatus}[]} */
     const transitions = [];
     for (const session of boardSessionsById.values()) {
@@ -1711,14 +1722,10 @@ function createFileOrganizerStore(options) {
         let to = null;
         if (from === "scheduled" && now >= session.startsAtMs) to = "open";
         else if (from === "open" && now >= session.endsAtMs) to = "closing";
-        else if (from === "closing" && now >= session.endsAtMs + closeDrainMs) {
-          to = "closed";
-        }
         if (!to) break;
         session.status = to;
         if (to === "open") session.openedAtMs = now;
         else if (to === "closing") session.closingAtMs = now;
-        else if (to === "closed") session.closedAtMs = now;
         recordAudit({
           actorAccountId: "",
           actorKind: "system",
@@ -1732,6 +1739,107 @@ function createFileOrganizerStore(options) {
     }
     if (transitions.length > 0) await enqueueWrite(persistNow);
     return transitions;
+  }
+
+  /**
+   * Board Sessions whose CLOSING drain window has elapsed and that are still
+   * waiting for the close pipeline to seal them (`closing` status, no archive
+   * yet), joined with the event board name the pipeline needs to reach the
+   * board. The list is a work queue read, not a mutation: it never changes
+   * state, so concurrent close attempts stay guarded by the store's own
+   * status transitions.
+   *
+   * @param {{now: number, closeDrainMs?: number}} input
+   * @returns {{boardSessionId: string, eventId: string, organizerId: string, boardName: string, endsAtMs: number}[]}
+   */
+  function listBoardSessionsDueToClose(input) {
+    ensureLoaded();
+    const now = input.now;
+    const closeDrainMs =
+      typeof input.closeDrainMs === "number" &&
+      Number.isFinite(input.closeDrainMs)
+        ? Math.max(0, input.closeDrainMs)
+        : 0;
+    /** @type {{boardSessionId: string, eventId: string, organizerId: string, boardName: string, endsAtMs: number}[]} */
+    const due = [];
+    for (const session of boardSessionsById.values()) {
+      if (session.status !== "closing" || session.archiveKey !== null) continue;
+      if (now < session.endsAtMs + closeDrainMs) continue;
+      const event = eventsById.get(session.eventId);
+      if (!event) continue;
+      due.push({
+        boardSessionId: session.boardSessionId,
+        eventId: session.eventId,
+        organizerId: session.organizerId,
+        boardName: event.boardName,
+        endsAtMs: session.endsAtMs,
+      });
+    }
+    return due;
+  }
+
+  /**
+   * Seals a draining Board Session CLOSED after its Private Board Archive
+   * succeeded: the terminal transition records the archive's object-storage
+   * key and the validated final sequence, and is guarded so only a `closing`
+   * session can be sealed (a closed or cancelled session is refused, and a
+   * session that was never archived is never marked closed). A session sealed
+   * here can never be re-edited or reopened; continued creation needs a new
+   * Board Session.
+   *
+   * @param {{boardSessionId: string, archiveKey: string, finalSeq: number, archivedAtMs: number}} input
+   * @returns {Promise<{ok: true} | {ok: false, reason: "not_found" | "not_closing" | "invalid_archive"}>}
+   */
+  async function markBoardSessionClosed(input) {
+    ensureLoaded();
+    const session = boardSessionsById.get(String(input.boardSessionId || ""));
+    if (!session) return { ok: false, reason: "not_found" };
+    if (session.status !== "closing") {
+      return { ok: false, reason: "not_closing" };
+    }
+    const archiveKey = String(input.archiveKey || "");
+    const finalSeq = input.finalSeq;
+    if (archiveKey === "" || !Number.isSafeInteger(finalSeq) || finalSeq < 0) {
+      return { ok: false, reason: "invalid_archive" };
+    }
+    session.status = "closed";
+    session.closedAtMs = input.archivedAtMs;
+    session.archiveKey = archiveKey;
+    session.archivedAtMs = input.archivedAtMs;
+    session.archivedFinalSeq = finalSeq;
+    recordAudit({
+      actorAccountId: "",
+      actorKind: "system",
+      action: "board_session.closed",
+      subjectType: "board_session",
+      subjectId: session.boardSessionId,
+      organizerId: session.organizerId,
+    });
+    await enqueueWrite(persistNow);
+    return { ok: true };
+  }
+
+  /**
+   * Records one observable close-pipeline failure against a still-draining
+   * Board Session. The session stays `closing` — a failed archive is never
+   * dressed up as a closed one — and the next close attempt retries it.
+   *
+   * @param {{boardSessionId: string}} input
+   * @returns {Promise<void>}
+   */
+  async function recordBoardSessionArchiveFailed(input) {
+    ensureLoaded();
+    const session = boardSessionsById.get(String(input.boardSessionId || ""));
+    if (!session || session.status !== "closing") return;
+    recordAudit({
+      actorAccountId: "",
+      actorKind: "system",
+      action: "board_session.archive_failed",
+      subjectType: "board_session",
+      subjectId: session.boardSessionId,
+      organizerId: session.organizerId,
+    });
+    await enqueueWrite(persistNow);
   }
 
   /**
@@ -2484,6 +2592,9 @@ function createFileOrganizerStore(options) {
     listSubmittedReservations,
     getBoardSessionForReservation,
     advanceLifecycle,
+    listBoardSessionsDueToClose,
+    markBoardSessionClosed,
+    recordBoardSessionArchiveFailed,
     submitChangeRequest,
     approveChangeRequest,
     rejectChangeRequest,

@@ -10,6 +10,8 @@ import {
 } from "./accounts/routes.mjs";
 import { createFileAccountStore } from "./accounts/store.mjs";
 import { createEventAdmission } from "./admission/index.mjs";
+import { createBoardArchivePipeline } from "./archive/close.mjs";
+import { createFileBoardArchiveStore } from "./archive/store.mjs";
 import { createFileBrandAssetStore } from "./assets/store.mjs";
 import { createParticipantIdentifierResolver } from "./attribution.mjs";
 import { createEventRoutes } from "./events/routes.mjs";
@@ -214,6 +216,35 @@ function createHostedEventModule(config, paths) {
   );
   const sourceMapping = resolveSourceMapping(config);
 
+  // Private Board Archive storage: write-once objects under
+  // `<HOSTED_DATA_DIR>/board-archives/`, addressed by internal keys that are
+  // never public access credentials. The close pipeline below is the only
+  // writer.
+  const archiveStore = createFileBoardArchiveStore({
+    dataDir: config.HOSTED_DATA_DIR,
+  });
+  const boardArchivePipeline = createBoardArchivePipeline({
+    organizerStore,
+    archiveStore,
+    config,
+    clock,
+  });
+  const serviceClock = clock || (() => Date.now());
+  const closeDrainMs = config.HOSTED_BOARD_SESSION_CLOSE_DRAIN_MS;
+  /**
+   * Lazily advances the durable Board Session lifecycle and then runs the
+   * close pipeline for sessions whose drain window has elapsed, so admission
+   * decisions and every console read see the authoritative status at the
+   * current service clock. Both steps are idempotent, so calling this before
+   * every admission is safe. Close failures are recorded by the pipeline and
+   * retried by the next pass; they never fail the surrounding request.
+   */
+  const refreshEventLifecycle = async () => {
+    const now = serviceClock();
+    await organizerStore.advanceLifecycle({ now, closeDrainMs });
+    await boardArchivePipeline.runDueCloses({ now, closeDrainMs });
+  };
+
   const accountRoutes = createHostedAccountRoutes({
     config,
     clock,
@@ -303,6 +334,7 @@ function createHostedEventModule(config, paths) {
     organizerStore,
     limiter,
     operatorEmails,
+    advanceEventLifecycle: refreshEventLifecycle,
     templates: {
       organizerReservations: new HostedPageTemplate(
         paths.organizerReservationsTemplatePath,
@@ -345,6 +377,7 @@ function createHostedEventModule(config, paths) {
     membershipStore,
     integrationStore,
     limiter,
+    advanceEventLifecycle: refreshEventLifecycle,
   });
 
   // Real-time admission for event Board Sessions: the single authority that
@@ -391,6 +424,7 @@ function createHostedEventModule(config, paths) {
     moderation: eventModeration,
     assetStore,
     limiter,
+    advanceEventLifecycle: refreshEventLifecycle,
     templates: {
       home: homeTemplate,
       event: new HostedPageTemplate(
@@ -417,25 +451,14 @@ function createHostedEventModule(config, paths) {
       }),
     );
   }
-  /**
-   * Lazily advances the durable Board Session lifecycle so admission
-   * decisions see the authoritative status at the current service clock.
-   * Idempotent, so calling it before every admission is safe.
-   */
-  const serviceClock = clock || (() => Date.now());
-  const refreshEventLifecycle = async () => {
-    await organizerStore.advanceLifecycle({
-      now: serviceClock(),
-      closeDrainMs: config.HOSTED_BOARD_SESSION_CLOSE_DRAIN_MS,
-    });
-  };
 
-  // Durable lifecycle poker: advances Board Sessions with no active reader so a
-  // headless event still opens and closes on time. The persisted times plus the
-  // service clock are authoritative — the interval only triggers an idempotent
-  // catch-up. It stays off when a test injects a clock (advancement is driven
-  // through requests) or when the poll interval is zero, and never keeps the
-  // process alive on its own.
+  // Durable lifecycle poker: advances Board Sessions and seals drained ones
+  // with no active reader so a headless event still opens, closes, and
+  // archives on time. The persisted times plus the service clock are
+  // authoritative — the interval only triggers an idempotent catch-up. It
+  // stays off when a test injects a clock (advancement is driven through
+  // requests) or when the poll interval is zero, and never keeps the process
+  // alive on its own.
   const pollMs = config.HOSTED_LIFECYCLE_POLL_MS;
   if (
     config.HOSTED_MODE === true &&
@@ -443,13 +466,10 @@ function createHostedEventModule(config, paths) {
     typeof pollMs === "number" &&
     pollMs > 0
   ) {
-    const closeDrainMs = config.HOSTED_BOARD_SESSION_CLOSE_DRAIN_MS;
     const timer = setInterval(() => {
-      organizerStore
-        .advanceLifecycle({ now: Date.now(), closeDrainMs })
-        .catch((error) => {
-          logger.error("hosted.lifecycle_poke_failed", { error });
-        });
+      refreshEventLifecycle().catch((error) => {
+        logger.error("hosted.lifecycle_poke_failed", { error });
+      });
     }, pollMs);
     if (typeof timer.unref === "function") timer.unref();
   }
@@ -482,6 +502,11 @@ function createHostedEventModule(config, paths) {
     refreshEventLifecycle,
     ...eventAdmission,
     ...eventModeration,
+    // Real-time close effects: the socket layer registers how connected
+    // sockets reach their read-only completion state when a Board Session is
+    // sealed. Compositions without sockets simply keep the no-op default.
+    registerBoardCloseEffects: boardArchivePipeline.registerCloseEffects,
+    runBoardSessionCloses: boardArchivePipeline.runDueCloses,
     serveEventAnonymity: eventRoutes.serveEventAnonymity,
     serveBrandAsset: eventRoutes.serveBrandAsset,
     serveOrganizerEvent: eventRoutes.serveOrganizerEvent,

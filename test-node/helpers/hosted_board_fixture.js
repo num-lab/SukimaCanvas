@@ -19,6 +19,12 @@ const {
   createParticipantIdentifierResolver,
 } = require("../../server/hosted_event/attribution.mjs");
 const {
+  createFileBoardArchiveStore,
+} = require("../../server/hosted_event/archive/store.mjs");
+const {
+  createBoardArchivePipeline,
+} = require("../../server/hosted_event/archive/close.mjs");
+const {
   createFileBoardMutationLedger,
 } = require("../../server/hosted_event/ledger/store.mjs");
 const {
@@ -46,18 +52,21 @@ const participantIdentifierFor =
   createParticipantIdentifierResolver(ATTRIBUTION_SECRET);
 
 /**
- * Composes the hosted stores, admission module, and the durable mutation
- * ledger exactly like the hosted module composition does, against one shared
- * controllable clock in a temporary data directory, and registers the ledger
- * factory for the socket scenario.
+ * Composes the hosted stores, admission module, close pipeline, and the
+ * durable mutation ledger exactly like the hosted module composition does,
+ * against one shared controllable clock in a temporary data directory, and
+ * registers the ledger factory for the socket scenario.
  *
  * @param {number} now
- * @param {{seats?: number}} [options]
+ * @param {{seats?: number, config?: any}} [options]
  */
-async function createFixture(now, { seats = 2 } = {}) {
+async function createFixture(now, { seats = 2, config } = {}) {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "wbo-attr-"));
   const holder = { now };
   const clock = () => holder.now;
+  // The close pipeline loads boards through the same config the socket
+  // scenario uses, so snapshot saves land in the scenario's history dir.
+  const resolvedConfig = config || require("../../server/configuration.mjs");
   const accountStore = createFileAccountStore({
     dataDir,
     clock,
@@ -84,15 +93,27 @@ async function createFixture(now, { seats = 2 } = {}) {
   registerBoardMutationLedgerFactory((boardName) =>
     createFileBoardMutationLedger({ boardName, dataDir }),
   );
+  const archiveStore = createFileBoardArchiveStore({ dataDir });
+  const boardArchivePipeline = createBoardArchivePipeline({
+    organizerStore,
+    archiveStore,
+    config: resolvedConfig,
+    clock,
+  });
   const hostedModule = {
     enabled: true,
     ...admission,
     ...eventModeration,
     moderationStore,
+    registerBoardCloseEffects: boardArchivePipeline.registerCloseEffects,
+    runBoardSessionCloses: boardArchivePipeline.runDueCloses,
     // Mirrors the composed hosted module: admission advances the durable
-    // lifecycle against the fixture clock before every decision.
+    // lifecycle and seals drained sessions against the fixture clock before
+    // every decision.
     refreshEventLifecycle: async () => {
-      await organizerStore.advanceLifecycle({ now: holder.now });
+      const now = holder.now;
+      await organizerStore.advanceLifecycle({ now });
+      await boardArchivePipeline.runDueCloses({ now });
     },
   };
 
@@ -155,6 +176,9 @@ async function createFixture(now, { seats = 2 } = {}) {
     holder,
     dataDir,
     ledgerDir: path.join(dataDir, "mutation-ledger"),
+    archiveDir: path.join(dataDir, "board-archives"),
+    archiveStore,
+    boardArchivePipeline,
     accountStore,
     organizerStore,
     membershipStore,

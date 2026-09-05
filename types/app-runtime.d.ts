@@ -333,6 +333,8 @@ export type AppBoardState = {
   canReport?: boolean;
   canWrite: boolean;
   accessRefreshAfterMs?: number;
+  /** The Board Session was sealed behind its archive; the board is complete. */
+  eventClosed?: boolean;
 };
 
 export type MutationRejectedPayload = {

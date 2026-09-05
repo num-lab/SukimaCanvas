@@ -92,6 +92,13 @@ export type HostedEventModule = {
   serveEventEnter: HttpRouteHandler;
   serveEventAnonymity: HttpRouteHandler;
   refreshEventLifecycle: () => Promise<void>;
+  registerBoardCloseEffects: (effects: {
+    notifyBoardClosed: (boardName: string) => Promise<void>;
+  }) => void;
+  runBoardSessionCloses: (input?: {
+    now?: number;
+    closeDrainMs?: number;
+  }) => Promise<{ boardSessionId: string; finalSeq: number }[]>;
   admitEventBoardSocket: HostedBoardAdmission["admitEventBoardSocket"];
   admitEventBoardPage: HostedBoardAdmission["admitEventBoardPage"];
   noteEventSocketConnected: HostedBoardAdmission["noteEventSocketConnected"];

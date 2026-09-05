@@ -1,8 +1,8 @@
-import observability from "../observability/index.mjs";
 import {
   getMutationType,
   MutationType,
 } from "../../client-data/js/message_tool_metadata.js";
+import observability from "../observability/index.mjs";
 import { SerialTaskQueue } from "./serial_task_queue.mjs";
 
 /** @typedef {import("../../types/server-runtime.d.ts").MutationLogEntry} MutationLogEntry */
@@ -41,6 +41,7 @@ import { SerialTaskQueue } from "./serial_task_queue.mjs";
  *   board: BoardSessionBoard,
  *   acceptedMutationsByClientMutationId: Map<string, MutationLogEntry>,
  *   pruneClientMutationIds: (nowMs: number) => void,
+ *   sealWrites: () => Promise<void>,
  *   acceptPersistentMutation: (
  *     mutation: NormalizedMessageData,
  *     nowMs?: number,
@@ -56,6 +57,8 @@ import { SerialTaskQueue } from "./serial_task_queue.mjs";
 const { logger } = observability;
 
 const LEDGER_UNAVAILABLE_REASON = "ledger_unavailable";
+/** Deterministic refusal reason for persistent writes arriving after the close barrier. */
+const WRITES_SEALED_REASON = "writes_sealed";
 /** Duplicate-retry window, aligned with the reconnect-grace scale. */
 const CLIENT_MUTATION_ID_TTL_MS = 15 * 60 * 1000;
 const CLIENT_MUTATION_ID_MAP_LIMIT = 4096;
@@ -134,6 +137,8 @@ export function createBoardSession(board) {
   const queue = new SerialTaskQueue();
   /** @type {Map<string, MutationLogEntry>} */
   const acceptedMutationsByClientMutationId = new Map();
+  /** Write barrier for closing: flipped by sealWrites inside the queue. */
+  let writesSealed = false;
 
   /**
    * Bounds duplicate tracking. Called only when the map overflows its cap —
@@ -224,6 +229,24 @@ export function createBoardSession(board) {
     board,
     acceptedMutationsByClientMutationId,
     pruneClientMutationIds,
+    /**
+     * Forms the final write boundary for closing: once this resolves, every
+     * mutation enqueued before it has finished its acceptance work (mutation
+     * application, ledger append, log record), and any persistent mutation
+     * enqueued afterwards is deterministically refused with
+     * WRITES_SEALED_REASON. The close pipeline uses it so the board's final
+     * authoritative sequence is exactly the sequence of everything already
+     * admitted — nothing later can join the archived history. Already
+     * accepted mutations still deduplicate by clientMutationId so sender
+     * retries keep confirming the original entry.
+     *
+     * @returns {Promise<void>}
+     */
+    sealWrites() {
+      return queue.runExclusive(async () => {
+        writesSealed = true;
+      });
+    },
     async acceptPersistentMutation(mutation, nowMs = Date.now(), operator) {
       return queue.runExclusive(async () => {
         consumePendingMutationEffects(
@@ -258,6 +281,13 @@ export function createBoardSession(board) {
                 entry: existing,
               };
             }
+          }
+          if (writesSealed) {
+            // The write barrier landed after this mutation was enqueued: it
+            // missed the archived history and is refused as a matter of
+            // course. Live revalidation already refuses nearly everything;
+            // this catches the remaining interleavings deterministically.
+            return { ok: false, reason: WRITES_SEALED_REASON };
           }
         }
         let acceptedMutation = mutation;
@@ -367,4 +397,4 @@ export function getBoardSession(board) {
   return created;
 }
 
-export { LEDGER_UNAVAILABLE_REASON };
+export { LEDGER_UNAVAILABLE_REASON, WRITES_SEALED_REASON };
