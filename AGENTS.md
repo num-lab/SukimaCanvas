@@ -96,9 +96,14 @@ hosted page templates are never served statically; their routes own them, and
 legacy mode 404s all account routes. Verification and recovery mail is
 composed in the request's language and queued through the notification
 service's durable queue (see below), so a mail vendor outage becomes an
-observable retry instead of a failed request, and is delivered as JSON files
-in `WBO_HOSTED_MAIL_OUTBOX_DIR` (default `<WBO_HOSTED_DATA_DIR>/mail-outbox`)
-until a mail vendor is selected. Account
+observable retry instead of a failed request. Delivery goes through the
+adapter `WBO_HOSTED_MAIL_TRANSPORT` selects
+([mail.mjs](./server/hosted_event/accounts/mail.mjs)): `smtp`
+([smtp_mail.mjs](./server/hosted_event/accounts/smtp_mail.mjs)) submits to a
+real vendor over implicit TLS with deployment-supplied credentials and fails
+closed when incompletely configured, and the default `outbox` writes JSON
+files in `WBO_HOSTED_MAIL_OUTBOX_DIR` (default
+`<WBO_HOSTED_DATA_DIR>/mail-outbox`) for an external sender to drain. Account
 responses, logs, and emails must never carry passwords, password hashes, or
 verification tokens; hosted pages are session-aware and therefore `no-store`
 with `Referrer-Policy: no-referrer`. Hosted account limits and timeouts are

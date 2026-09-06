@@ -3,6 +3,7 @@ import * as path from "node:path";
 import crypto from "node:crypto";
 
 import { isValidNormalizedEmail, normalizeEmail } from "./emails.mjs";
+import { createSmtpMailDelivery } from "./smtp_mail.mjs";
 
 /** @import { ServerConfig } from "../../../types/server-runtime.d.ts" */
 
@@ -10,10 +11,13 @@ import { isValidNormalizedEmail, normalizeEmail } from "./emails.mjs";
  * Durable outbox mail delivery.
  *
  * Lifecycle notices such as account verification are written as JSON files
- * into a configured outbox directory. The mail vendor for the first release
- * is not selected yet, so this adapter is the production delivery path: an
- * external sender drains the directory. Messages carry no credentials beyond
- * the single-use link the recipient needs.
+ * into a configured outbox directory for an external sender to drain. This
+ * is the default adapter and the fallback for a deployment that has not
+ * configured a mail vendor: mail is queued somewhere durable rather than
+ * dropped, but nothing here delivers it. A deployment that must actually
+ * reach recipients selects the SMTP adapter instead — see
+ * `createMailDelivery` below. Messages carry no credentials beyond the
+ * single-use link the recipient needs.
  *
  * The notification service passes each message's stable notification id, so
  * a redelivery attempt after a crash rewrites the same file instead of
@@ -67,4 +71,33 @@ function createOutboxMailDelivery(config) {
   return { send };
 }
 
-export { createOutboxMailDelivery };
+/**
+ * Selects the deployment's mail delivery adapter.
+ *
+ * `outbox` writes JSON files for an external sender to drain and is the
+ * default, so a deployment that has not chosen a vendor still queues its mail
+ * somewhere durable instead of dropping it. `smtp` hands messages to a real
+ * SMTP vendor and fails closed at composition when it is not fully
+ * configured — see `smtp_mail.mjs`.
+ *
+ * Both adapters honor the same contract: resolve on acceptance, throw on
+ * failure, and let the notification service own queueing, idempotency, and
+ * retry.
+ *
+ * @param {ServerConfig} config
+ * @returns {{send: (message: {id?: string, to: string, subject: string, body: string}) => Promise<void>}}
+ */
+function createMailDelivery(config) {
+  const transport = String(config.HOSTED_MAIL_TRANSPORT || "outbox")
+    .trim()
+    .toLowerCase();
+  if (transport === "smtp") return createSmtpMailDelivery(config);
+  if (transport !== "outbox") {
+    throw new Error(
+      `Unsupported WBO_HOSTED_MAIL_TRANSPORT: ${transport} (expected outbox or smtp)`,
+    );
+  }
+  return createOutboxMailDelivery(config);
+}
+
+export { createMailDelivery, createOutboxMailDelivery };

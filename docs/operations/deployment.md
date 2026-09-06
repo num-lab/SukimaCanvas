@@ -26,6 +26,7 @@ Worth setting deliberately:
 | --- | --- | --- |
 | `WBO_HOSTED_DATA_DIR` | `<cwd>/hosted-data` | The data root. See §3. |
 | `WBO_HISTORY_DIR` | `<cwd>/server-data` | Board snapshots. See §3. |
+| `WBO_HOSTED_MAIL_TRANSPORT` | `outbox` | `smtp` sends real mail; `outbox` writes JSON files nobody delivers. See §4. |
 | `WBO_HOSTED_SERVICE_UTC_OFFSET_MINUTES` | `480` | Fixed service timezone for reservation wall-clock times. 480 is mainland China; change only with the service region. |
 | `TURNSTILE_SECRET_KEY`, `TURNSTILE_SITE_KEY` | unset | Registration and login run without a CAPTCHA when unset. |
 | `PORT`, `HOST` | `8080` | The container image sets `PORT=80`. |
@@ -89,12 +90,49 @@ product's own flows. In order:
 6. Participants reach the event at `/events/{publicId}` and enter with the
    Access Code. The board itself is `/b/{boardName}`, only after admission.
 
-**Mail is a file outbox, not SMTP.** No message leaves the host. Verification
-links, password resets, invitations, and lifecycle notices are written as
-`message-<id>.json` (`{to, subject, body, sentAtMs}`) under
+Step 2 needs mail to work. Configure it before the first registration.
+
+### Mail
+
+Set `WBO_HOSTED_MAIL_TRANSPORT=smtp` to send real mail. The default,
+`outbox`, writes each message as `message-<id>.json`
+(`{to, subject, body, sentAtMs}`) under
 `<WBO_HOSTED_DATA_DIR>/mail-outbox` (override with
-`WBO_HOSTED_MAIL_OUTBOX_DIR`). During a first deployment test, read the link
-out of `body`. A real mail vendor is still unselected — see §6.
+`WBO_HOSTED_MAIL_OUTBOX_DIR`) and delivers nothing — usable for a local trial
+by reading the verification link out of `body`, not for a real deployment.
+
+With `smtp`, these apply (`ADR 0010`):
+
+| Variable | Default | |
+| --- | --- | --- |
+| `WBO_HOSTED_MAIL_FROM` | — | **Required.** Its domain must be onboarded with the vendor. |
+| `WBO_HOSTED_SMTP_PASSWORD` | — | **Required.** For Cloudflare, an API token with Email Sending: Edit. Keep it in the secret store. |
+| `WBO_HOSTED_MAIL_FROM_NAME` | unset | Display name beside the From address. |
+| `WBO_HOSTED_SMTP_HOST` | `smtp.mx.cloudflare.net` | Any SMTP vendor works; only the defaults are Cloudflare's. |
+| `WBO_HOSTED_SMTP_PORT` | `465` | Cloudflare offers implicit TLS on 465 only — no STARTTLS on 587, no relay on 25. |
+| `WBO_HOSTED_SMTP_USER` | `api_token` | Cloudflare authenticates its API token under this literal username. |
+| `WBO_HOSTED_SMTP_TLS` | `true` | Only disablable for a loopback host; the adapter refuses anything routable, so the credential never crosses a network in the clear. |
+
+Missing the From address or the credential refuses the start (§5) rather than
+accepting registrations whose verification mail can never arrive.
+
+Cloudflare-side setup, per its docs: the domain's DNS must be on Cloudflare,
+the domain onboarded under Compute → Email Service → Email Sending, and the
+`cf-bounce` MX plus SPF, DKIM, and DMARC records published. Email Sending is
+Beta, transactional-only, on Workers Paid — which fits this service's mail
+exactly (verification, resets, invitations, lifecycle notices; no marketing).
+
+A vendor outage is not lost mail: delivery failures stay queued with backoff
+and appear on the operator console with the recipient and the vendor's SMTP
+reply. Watch that list after the first deploy.
+
+**Unverified for mainland China.** Reachability of
+`smtp.mx.cloudflare.net:465` from a mainland China host, and deliverability
+to QQ, 163, and 126 mailboxes from Cloudflare's senders, are untested here
+and are the main risk in this choice. Measure both during the deployment
+test, record the result in `launch-evidence.md`, and switch the host, port,
+and credentials to a domestic vendor if the numbers are poor — no code change
+is needed for that.
 
 ## 5. Verify after every deploy
 
@@ -117,7 +155,9 @@ to stderr — read it before assuming the platform is at fault.
 - **File-backed adapters.** PostgreSQL and S3-compatible object storage are
   the intended stores and are not selected yet; the recovery contract in
   runbook §2 is written so the swap does not change it.
-- **No mail vendor.** §4.
+- **Mail delivery is unproven from the service region.** The vendor is
+  selected and wired (§4), but nothing here has sent a message from a
+  mainland China host to a domestic mailbox.
 - **A large Image Export stalls the instance** for the duration of the render
   (issue 24, launch-evidence §3). Until that is resolved, treat exports of
   large archives as a scheduled maintenance action rather than a

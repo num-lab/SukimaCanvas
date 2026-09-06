@@ -54,10 +54,64 @@ export const HOSTED_DATA_DIR = parseStringEnv(
   path.join(APP_ROOT, "hosted-data"),
 );
 
-/** Directory where outgoing Hosted Event Service mail is queued as JSON files until a mail vendor is selected. */
+/** Directory the `outbox` mail transport queues outgoing mail into as JSON files. */
 export const HOSTED_MAIL_OUTBOX_DIR = parseStringEnv(
   "WBO_HOSTED_MAIL_OUTBOX_DIR",
   undefined,
+);
+
+/**
+ * Mail delivery adapter: `outbox` queues JSON files for an external sender,
+ * `smtp` submits to a real vendor. `smtp` fails closed at startup unless the
+ * From address and the credential are both configured.
+ */
+export const HOSTED_MAIL_TRANSPORT = parseStringEnv(
+  "WBO_HOSTED_MAIL_TRANSPORT",
+  "outbox",
+);
+
+/** Envelope and header From address. Its domain must be onboarded with the mail vendor. */
+export const HOSTED_MAIL_FROM = parseStringEnv(
+  "WBO_HOSTED_MAIL_FROM",
+  undefined,
+);
+
+/** Optional display name shown beside the From address. */
+export const HOSTED_MAIL_FROM_NAME = parseStringEnv(
+  "WBO_HOSTED_MAIL_FROM_NAME",
+  undefined,
+);
+
+/** SMTP submission host. Defaults to Cloudflare Email Service. */
+export const HOSTED_SMTP_HOST = parseStringEnv(
+  "WBO_HOSTED_SMTP_HOST",
+  "smtp.mx.cloudflare.net",
+);
+
+/** SMTP submission port. Cloudflare offers implicit TLS on 465 only. */
+export const HOSTED_SMTP_PORT = parseIntegerEnv("WBO_HOSTED_SMTP_PORT", 465);
+
+/**
+ * Implicit TLS for the SMTP connection. May only be disabled for a loopback
+ * host (the adapter refuses anything else), so the credential can never cross
+ * a network in the clear.
+ */
+export const HOSTED_SMTP_TLS = parseBooleanEnv("WBO_HOSTED_SMTP_TLS", true);
+
+/** SMTP AUTH username. Cloudflare authenticates its API token as `api_token`. */
+export const HOSTED_SMTP_USER = parseStringEnv(
+  "WBO_HOSTED_SMTP_USER",
+  "api_token",
+);
+
+/**
+ * SMTP AUTH password — for Cloudflare Email Service, an API token carrying
+ * the Email Sending: Edit permission. Keep it in the platform secret store;
+ * it is never logged and never rendered.
+ */
+export const HOSTED_SMTP_PASSWORD = parseStringEnv(
+  "WBO_HOSTED_SMTP_PASSWORD",
+  "",
 );
 
 /** Maximum age of a hosted account session, measured from its creation. */

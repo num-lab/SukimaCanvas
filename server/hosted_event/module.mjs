@@ -2,7 +2,7 @@ import { registerBoardMutationLedgerFactory } from "../board/ledger_registry.mjs
 import { localizedHref, Template } from "../http/templating.mjs";
 import observability from "../observability/index.mjs";
 import { createHostedCaptcha } from "./accounts/captcha.mjs";
-import { createOutboxMailDelivery } from "./accounts/mail.mjs";
+import { createMailDelivery } from "./accounts/mail.mjs";
 import { createRateLimiter } from "./accounts/rate_limits.mjs";
 import {
   createHostedAccountRoutes,
@@ -213,7 +213,7 @@ function createHostedEventModule(config, paths) {
   });
   const notifications = createNotificationService({
     store: notificationStore,
-    mail: createOutboxMailDelivery(config),
+    mail: createMailDelivery(config),
     accountStore: store,
     organizerStore,
     membershipStore,

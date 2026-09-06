@@ -104,10 +104,13 @@ issues a server-side session (30 days maximum, 12 hours idle) in an
 `/account` lists active sessions, revokes individual devices or all other
 devices, and changes the password (which signs other devices out); password
 resets through `/forgot` and `/reset` sign every device out. Verification and
-recovery messages are queued as JSON files under `WBO_HOSTED_MAIL_OUTBOX_DIR`
-(by default `<WBO_HOSTED_DATA_DIR>/mail-outbox`), where account state lives as
-well; set `TURNSTILE_SECRET_KEY` and `TURNSTILE_SITE_KEY` to require CAPTCHA
-on registration and login. Registration, login, and password-reset requests
+recovery messages go through the mail adapter chosen by
+`WBO_HOSTED_MAIL_TRANSPORT`: `smtp` submits to a real vendor (see
+[deployment.md](./docs/operations/deployment.md)), and the default `outbox`
+queues them as JSON files under `WBO_HOSTED_MAIL_OUTBOX_DIR` (by default
+`<WBO_HOSTED_DATA_DIR>/mail-outbox`), where account state lives as well; set
+`TURNSTILE_SECRET_KEY` and `TURNSTILE_SITE_KEY` to require CAPTCHA on
+registration and login. Registration, login, and password-reset requests
 are additionally rate limited per IP and per email address.
 
 ## Translations
