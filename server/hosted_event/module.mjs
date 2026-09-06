@@ -14,6 +14,8 @@ import { createBoardArchivePipeline } from "./archive/close.mjs";
 import { createFileBoardArchiveStore } from "./archive/store.mjs";
 import { createFileBrandAssetStore } from "./assets/store.mjs";
 import { createParticipantIdentifierResolver } from "./attribution.mjs";
+import { createBoardExportPipeline } from "./export/pipeline.mjs";
+import { createFileBoardExportStore } from "./export/store.mjs";
 import { createEventRoutes } from "./events/routes.mjs";
 import { createIntegrationRoutes } from "./integrations/routes.mjs";
 import { createFileIntegrationStore } from "./integrations/store.mjs";
@@ -229,6 +231,22 @@ function createHostedEventModule(config, paths) {
     config,
     clock,
   });
+  // Board Image Export jobs: durable job records plus rendered PNG results
+  // under `<HOSTED_DATA_DIR>/board-exports/`. The download token is derived
+  // from the deployment secret, never stored.
+  const exportStore = createFileBoardExportStore({
+    dataDir: config.HOSTED_DATA_DIR,
+    clock,
+    linkTtlMs: config.HOSTED_BOARD_EXPORT_LINK_TTL_MS,
+    hmacKey: config.AUTH_SECRET_KEY,
+  });
+  const boardExportPipeline = createBoardExportPipeline({
+    exportStore,
+    archiveStore,
+    organizerStore,
+    config,
+    clock,
+  });
   const serviceClock = clock || (() => Date.now());
   const closeDrainMs = config.HOSTED_BOARD_SESSION_CLOSE_DRAIN_MS;
   /**
@@ -238,11 +256,20 @@ function createHostedEventModule(config, paths) {
    * current service clock. Both steps are idempotent, so calling this before
    * every admission is safe. Close failures are recorded by the pipeline and
    * retried by the next pass; they never fail the surrounding request.
+   *
+   * Due export jobs are kicked on the same cadence but detached: rendering a
+   * PNG can take seconds, so no request path ever blocks on it. The in-flight
+   * guard inside the pipeline keeps overlapping passes from double-claiming a
+   * job, and the durable job records make any pass — this one, the lifecycle
+   * poker's, or one after a restart — equivalent.
    */
   const refreshEventLifecycle = async () => {
     const now = serviceClock();
     await organizerStore.advanceLifecycle({ now, closeDrainMs });
     await boardArchivePipeline.runDueCloses({ now, closeDrainMs });
+    boardExportPipeline.runDueExports({ now }).catch((error) => {
+      logger.error("hosted.board_export_pass_failed", { error });
+    });
   };
 
   const accountRoutes = createHostedAccountRoutes({
@@ -424,6 +451,8 @@ function createHostedEventModule(config, paths) {
     membershipStore,
     moderation: eventModeration,
     assetStore,
+    exportStore,
+    exportPipeline: boardExportPipeline,
     limiter,
     advanceEventLifecycle: refreshEventLifecycle,
     templates: {
@@ -516,6 +545,13 @@ function createHostedEventModule(config, paths) {
     serveOrganizerEventModeratorRevoke:
       eventRoutes.serveOrganizerEventModeratorRevoke,
     serveOrganizerEventCover: eventRoutes.serveOrganizerEventCover,
+    serveOrganizerEventExports: eventRoutes.serveOrganizerEventExports,
+    serveOrganizerEventExportDownload:
+      eventRoutes.serveOrganizerEventExportDownload,
+    serveOrganizerEventExportRevoke:
+      eventRoutes.serveOrganizerEventExportRevoke,
+    serveOrganizerEventExportDelete:
+      eventRoutes.serveOrganizerEventExportDelete,
   };
 }
 

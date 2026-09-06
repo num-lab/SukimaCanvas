@@ -67,7 +67,7 @@ async function createHostedServer(overrides = {}) {
 /**
  * @param {import("http").Server} app
  * @param {string} requestPath
- * @param {{method?: string, body?: string, headers?: {[key: string]: string}, cookie?: string}} [options]
+ * @param {{method?: string, body?: string, headers?: {[key: string]: string}, cookie?: string, binary?: boolean}} [options]
  * @returns {Promise<{statusCode: number, headers: import("http").IncomingHttpHeaders, body: string, setCookie: string[]}>}
  */
 function requestWithCookies(app, requestPath, options = {}) {
@@ -98,7 +98,9 @@ function requestWithCookies(app, requestPath, options = {}) {
       (response) => {
         /** @type {string[]} */
         const chunks = [];
-        response.setEncoding("utf8");
+        // Binary bodies (e.g. export PNG downloads) read as latin1 so every
+        // byte round-trips through the joined string.
+        response.setEncoding(options.binary ? "latin1" : "utf8");
         response.on("data", (chunk) => chunks.push(chunk));
         response.on("end", () =>
           resolve({

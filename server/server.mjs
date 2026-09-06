@@ -53,6 +53,10 @@ import {
   serveOrganizerEvent,
   serveOrganizerEventAccessCode,
   serveOrganizerEventCover,
+  serveOrganizerEventExportDelete,
+  serveOrganizerEventExportDownload,
+  serveOrganizerEventExportRevoke,
+  serveOrganizerEventExports,
   serveOrganizerEventEntryLock,
   serveOrganizerEventModeratorRevoke,
   serveOrganizerEventModerators,
@@ -273,6 +277,26 @@ function createWhiteboardHttpHandler() {
       "/organizers/{organizerId}/events/{eventId}/cover",
       serveOrganizerEventCover,
       "hosted_organizer_event_cover",
+    ),
+    route(
+      "/organizers/{organizerId}/events/{eventId}/exports",
+      serveOrganizerEventExports,
+      "hosted_organizer_event_exports",
+    ),
+    route(
+      "/organizers/{organizerId}/events/{eventId}/exports/{exportId}/download",
+      serveOrganizerEventExportDownload,
+      "hosted_organizer_event_export_download",
+    ),
+    route(
+      "/organizers/{organizerId}/events/{eventId}/exports/{exportId}/revoke",
+      serveOrganizerEventExportRevoke,
+      "hosted_organizer_event_export_revoke",
+    ),
+    route(
+      "/organizers/{organizerId}/events/{eventId}/exports/{exportId}/delete",
+      serveOrganizerEventExportDelete,
+      "hosted_organizer_event_export_delete",
     ),
     route(
       "/organizers/{organizerId}/credentials",

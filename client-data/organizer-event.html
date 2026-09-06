@@ -142,8 +142,8 @@
           <li class="hosted-moderator-item">
             <span class="hosted-moderator-email">{{email}}</span>
             <span class="hosted-moderator-granted">{{hostedTranslations.hosted_event_moderator_granted_at}} {{grantedAt}}</span>
-            <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/moderators/{{accountId}}/revoke" class="hosted-reservation-action">
-              <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+            <form method="post" action="organizers/{{../hostedOrganizerId}}/events/{{../hostedEventId}}/moderators/{{accountId}}/revoke" class="hosted-reservation-action">
+              <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
               <button type="submit" class="hosted-submit hosted-submit-danger">{{hostedTranslations.hosted_event_moderator_revoke}}</button>
             </form>
           </li>
@@ -178,6 +178,46 @@
         {{else}}
         <p class="hosted-account-note">{{hostedTranslations.hosted_event_moderation_log_empty}}</p>
         {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_export_title}}</h2>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_export_hint}}</p>
+        {{#if hostedEventHasExportJobs}}
+        <ul class="hosted-export-list">
+          {{#hostedEventExportJobs}}
+          <li class="hosted-export-item">
+            <span class="hosted-export-status">{{statusLabel}}</span>
+            <span class="hosted-export-time">{{createdAt}}</span>
+            {{#if dimensions}}<span class="hosted-export-dimensions">{{dimensions}}</span>{{/if}}
+            {{#if failureLabel}}<span class="hosted-export-failure">{{failureLabel}}</span>{{/if}}
+            {{#if downloadHref}}
+            <span class="hosted-export-download">
+              <a href="{{downloadHref}}" download="{{filename}}">{{../hostedTranslations.hosted_export_download}}</a>
+              <span class="hosted-export-expires">{{../hostedTranslations.hosted_export_link_expires}} {{downloadExpiresAt}}</span>
+            </span>
+            {{else}}
+            {{#if dimensions}}<span class="hosted-export-expires">{{../hostedTranslations.hosted_export_link_unavailable}}</span>{{/if}}
+            {{/if}}
+            {{#if canRevoke}}
+            <form method="post" action="organizers/{{../hostedOrganizerId}}/events/{{../hostedEventId}}/exports/{{exportId}}/revoke" class="hosted-reservation-action">
+              <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+              <button type="submit" class="hosted-submit">{{../hostedTranslations.hosted_export_revoke}}</button>
+            </form>
+            {{/if}}
+            <form method="post" action="organizers/{{../hostedOrganizerId}}/events/{{../hostedEventId}}/exports/{{exportId}}/delete" class="hosted-reservation-action">
+              <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+              <button type="submit" class="hosted-submit hosted-submit-danger">{{../hostedTranslations.hosted_export_delete}}</button>
+            </form>
+          </li>
+          {{/hostedEventExportJobs}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_export_empty}}</p>
+        {{/if}}
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/exports" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_export_request}}</button>
+        </form>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_export_request_hint}}</p>
 
         <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_event_cover_label}}</h2>
         {{#if hostedEventHasCover}}

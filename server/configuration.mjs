@@ -288,6 +288,25 @@ export const HOSTED_LIFECYCLE_POLL_MS = parseIntegerEnv(
   30 * 1000,
 );
 
+/**
+ * How long an export's authorized download link stays valid after the job
+ * succeeded. Revoking the link or deleting the export invalidates it earlier.
+ */
+export const HOSTED_BOARD_EXPORT_LINK_TTL_MS = parseIntegerEnv(
+  "WBO_HOSTED_BOARD_EXPORT_LINK_TTL_MS",
+  24 * 60 * 60 * 1000,
+);
+
+/**
+ * Backoff between automatic retries of a failed Board Image Export job. A job
+ * past its attempt budget stays failed; recovery is a fresh export request.
+ * `0` retries on the next lifecycle pass.
+ */
+export const HOSTED_BOARD_EXPORT_RETRY_MS = parseIntegerEnv(
+  "WBO_HOSTED_BOARD_EXPORT_RETRY_MS",
+  15 * 60 * 1000,
+);
+
 /** Capacity window buffer added before a reservation's start and after its end. */
 export const HOSTED_CAPACITY_WINDOW_BUFFER_MS = parseIntegerEnv(
   "WBO_HOSTED_CAPACITY_WINDOW_BUFFER_MS",

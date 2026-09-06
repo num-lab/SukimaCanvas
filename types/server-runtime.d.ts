@@ -115,6 +115,10 @@ export type HostedEventModule = {
   serveOrganizerEventModerators: HttpRouteHandler;
   serveOrganizerEventModeratorRevoke: HttpRouteHandler;
   serveOrganizerEventCover: HttpRouteHandler;
+  serveOrganizerEventExports: HttpRouteHandler;
+  serveOrganizerEventExportDownload: HttpRouteHandler;
+  serveOrganizerEventExportRevoke: HttpRouteHandler;
+  serveOrganizerEventExportDelete: HttpRouteHandler;
   serveOrganizerCredentialCreate: HttpRouteHandler;
   serveOrganizerCredentialRotate: HttpRouteHandler;
   serveOrganizerCredentialRevoke: HttpRouteHandler;
