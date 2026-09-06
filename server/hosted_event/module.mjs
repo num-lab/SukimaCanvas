@@ -17,6 +17,8 @@ import { createParticipantIdentifierResolver } from "./attribution.mjs";
 import { createEventRoutes } from "./events/routes.mjs";
 import { createBoardExportPipeline } from "./export/pipeline.mjs";
 import { createFileBoardExportStore } from "./export/store.mjs";
+import { createHistoricalImportRoutes } from "./history/routes.mjs";
+import { createFileHistoricalArchiveStore } from "./history/store.mjs";
 import { createIntegrationRoutes } from "./integrations/routes.mjs";
 import { createFileIntegrationStore } from "./integrations/store.mjs";
 import { createFileBoardMutationLedger } from "./ledger/store.mjs";
@@ -145,6 +147,7 @@ class HostedPageTemplate extends Template {
  *   operatorReservationTemplatePath: string,
  *   operatorChangesTemplatePath: string,
  *   operatorChangeTemplatePath: string,
+ *   operatorHistoricalImportsTemplatePath: string,
  *   eventTemplatePath: string,
  *   organizerEventTemplatePath: string,
  *   organizerEventAuditTemplatePath: string,
@@ -247,6 +250,15 @@ function createHostedEventModule(config, paths) {
   // its own key namespace.
   const archiveStore = createFileBoardArchiveStore({
     dataDir: config.HOSTED_DATA_DIR,
+  });
+  // Historical Archives: operator-imported legacy WBO results under their own
+  // `historical-archives/` key namespace. They are not Board Sessions — no
+  // lifecycle, publication, export, or retention surface ever touches them.
+  const historyStore = createFileHistoricalArchiveStore({
+    dataDir: config.HOSTED_DATA_DIR,
+    clock,
+    archiveStore,
+    organizerStore,
   });
   const publicationStore = createFilePublicationStore({
     dataDir: config.HOSTED_DATA_DIR,
@@ -460,6 +472,23 @@ function createHostedEventModule(config, paths) {
     advanceEventLifecycle: refreshEventLifecycle,
   });
 
+  // The controlled Historical Archive import is an operator-console surface:
+  // one explicit form, one source file, one target Organizer.
+  const historyRoutes = createHistoricalImportRoutes({
+    config,
+    accountStore: store,
+    organizerStore,
+    historyStore,
+    operatorEmails,
+    templates: {
+      operatorHistoricalImports: new HostedPageTemplate(
+        paths.operatorHistoricalImportsTemplatePath,
+        config,
+        templateOptions,
+      ),
+    },
+  });
+
   // Real-time admission for event Board Sessions: the single authority that
   // decides who may open the board, in which role, and with which seat. Both
   // the socket layer and the hosted board page route come through it.
@@ -589,6 +618,7 @@ function createHostedEventModule(config, paths) {
     ...accountRoutes,
     ...organizerRoutes,
     ...reservationRoutes,
+    ...historyRoutes,
     serveEventPage: eventRoutes.serveEventPage,
     serveEventEnter: eventRoutes.serveEventEnter,
     serveEventEntryGrantRedeem: integrationRoutes.serveEventEntryGrantRedeem,

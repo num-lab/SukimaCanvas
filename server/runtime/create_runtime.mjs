@@ -37,6 +37,7 @@ const HOSTED_TEMPLATE_PATHS = new Set([
   "/operator-reservation.html",
   "/operator-changes.html",
   "/operator-change.html",
+  "/operator-historical-imports.html",
   "/event.html",
   "/organizer-event.html",
 ]);
@@ -277,6 +278,11 @@ function createServerRuntime(config) {
       config,
       "operator-change.html",
     ),
+    operatorHistoricalImportsTemplatePath:
+      configuredTemplatePathWithBundledFallback(
+        config,
+        "operator-historical-imports.html",
+      ),
     eventTemplatePath: configuredTemplatePathWithBundledFallback(
       config,
       "event.html",

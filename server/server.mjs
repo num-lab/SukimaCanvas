@@ -42,6 +42,7 @@ import {
   serveOperatorChanges,
   serveOperatorConsole,
   serveOperatorOutcomePurgeRetry,
+  serveOperatorHistoricalImports,
   serveOperatorRejectApplication,
   serveOperatorRejectChange,
   serveOperatorRejectReservation,
@@ -370,6 +371,11 @@ function createWhiteboardHttpHandler() {
       "/operator/events/{eventId}/outcome-purge-retry",
       serveOperatorOutcomePurgeRetry,
       "hosted_operator_outcome_purge_retry",
+    ),
+    route(
+      "/operator/historical-imports",
+      serveOperatorHistoricalImports,
+      "hosted_operator_historical_imports",
     ),
     route(
       "/operator/reservations",

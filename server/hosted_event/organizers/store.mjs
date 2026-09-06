@@ -1035,6 +1035,23 @@ function createFileOrganizerStore(options) {
   }
 
   /**
+   * Every provisioned Organizer, oldest first. This is an operator-console
+   * selection surface (e.g. the Historical Archive import target list); it is
+   * never exposed to organizer or participant pages.
+   *
+   * @returns {{organizerId: string, name: string}[]}
+   */
+  function listOrganizers() {
+    ensureLoaded();
+    return [...organizersById.values()]
+      .sort((left, right) => left.createdAtMs - right.createdAtMs)
+      .map((organizer) => ({
+        organizerId: organizer.organizerId,
+        name: organizer.name,
+      }));
+  }
+
+  /**
    * Changes an existing member's role. Owner-only in the route layer; the store
    * refuses to demote the last remaining Owner so an organizer can never be left
    * with no one able to manage it.
@@ -2187,8 +2204,9 @@ function createFileOrganizerStore(options) {
     const event = eventsById.get(String(input.eventId || ""));
     if (!event) return { purgedSessions: 0, finalizedDeletion: false };
     const now = clock();
-    const scopedIds =
-      Array.isArray(input.sessionIds) ? new Set(input.sessionIds) : null;
+    const scopedIds = Array.isArray(input.sessionIds)
+      ? new Set(input.sessionIds)
+      : null;
     let purgedSessions = 0;
     for (const session of listBoardSessionsForEvent(event.eventId)) {
       if (
@@ -3199,6 +3217,7 @@ function createFileOrganizerStore(options) {
     getMemberRole,
     listMembers,
     listOrganizersForAccount,
+    listOrganizers,
     changeMemberRole,
     removeMember,
     createInvitation,

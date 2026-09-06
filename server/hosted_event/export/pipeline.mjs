@@ -122,10 +122,7 @@ function createBoardExportPipeline(dependencies) {
    */
   function eventOutcomesInvalidated(job) {
     const event = organizerStore.getEventById(job.eventId);
-    if (
-      event?.outcomeDeletion &&
-      event.outcomeDeletion.purgedAtMs === null
-    ) {
+    if (event?.outcomeDeletion && event.outcomeDeletion.purgedAtMs === null) {
       return true;
     }
     const session = organizerStore.getBoardSessionById(job.boardSessionId);
