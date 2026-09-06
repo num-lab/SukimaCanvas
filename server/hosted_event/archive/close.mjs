@@ -44,6 +44,7 @@ const { logger, metrics } = observability;
  *   archiveStore: ReturnType<typeof import("./store.mjs").createFileBoardArchiveStore>,
  *   config: import("../../../types/server-runtime.d.ts").ServerConfig,
  *   clock?: () => number,
+ *   notifications?: import("../notifications/service.mjs").NotificationService,
  * }} BoardArchivePipelineDependencies
  */
 
@@ -193,6 +194,7 @@ function closeError(code, message) {
 function createBoardArchivePipeline(dependencies) {
   const organizerStore = dependencies.organizerStore;
   const archiveStore = dependencies.archiveStore;
+  const notifications = dependencies.notifications;
   const clock = dependencies.clock || (() => Date.now());
   // Captured once at composition, never re-read per close attempt.
   const archiveRetryMs =
@@ -203,6 +205,35 @@ function createBoardArchivePipeline(dependencies) {
       : 0;
   /** @type {Set<string>} */
   const closesInFlight = new Set();
+
+  /**
+   * The event's display name for notice content, or empty when the event
+   * record has vanished (a cancelled-and-pruned event still closes).
+   *
+   * @param {{eventId: string}} due
+   * @returns {string}
+   */
+  function eventNameFor(due) {
+    return organizerStore.getEventById(due.eventId)?.name || "";
+  }
+
+  /**
+   * Awaits one notice trigger, never letting a notice problem disturb the
+   * close pass: enqueueing is durable before delivery, and a failure is
+   * logged, not classified as an archive failure.
+   *
+   * @param {Promise<void>} notice
+   * @param {{boardSessionId: string}} due
+   * @returns {Promise<void>}
+   */
+  async function notifyNotice(notice, due) {
+    await notice.catch((notifyError) => {
+      logger.error("hosted.board_session_archive_notify_failed", {
+        board_session: due.boardSessionId,
+        error: notifyError,
+      });
+    });
+  }
 
   /**
    * The socket layer's real-time close effect: connected participants must end
@@ -433,6 +464,26 @@ function createBoardArchivePipeline(dependencies) {
               error: auditError,
             });
           });
+        if (notifications) {
+          // The first failure of an episode informs the organizer once; the
+          // retry backoff refreshes the durable failure context but must not
+          // turn into a mail storm.
+          const failed = organizerStore.getBoardSessionById(
+            session.boardSessionId,
+          );
+          if (failed?.archiveFailure?.attempts === 1) {
+            await notifyNotice(
+              notifications.onSessionArchiveFailed({
+                boardSessionId: session.boardSessionId,
+                eventId: session.eventId,
+                organizerId: session.organizerId,
+                eventName: eventNameFor(session),
+                failureCode: failure.code,
+              }),
+              session,
+            );
+          }
+        }
       } finally {
         closesInFlight.delete(session.boardSessionId);
       }
@@ -449,6 +500,21 @@ function createBoardArchivePipeline(dependencies) {
             error,
           });
         });
+        if (notifications) {
+          // The organizer learns the archive succeeded and the event's
+          // members learn the event has ended. Enqueueing is durable before
+          // delivery, so a slow or failing vendor cannot hold the close pass,
+          // and a notice failure is never an archive failure.
+          await notifyNotice(
+            notifications.onSessionArchived({
+              boardSessionId: session.boardSessionId,
+              eventId: session.eventId,
+              organizerId: session.organizerId,
+              eventName: eventNameFor(session),
+            }),
+            session,
+          );
+        }
       }
     }
     return closed;

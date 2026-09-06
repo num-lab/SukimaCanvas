@@ -101,6 +101,27 @@
         {{#if hostedOperatorArchiveNotice}}
         <p class="hosted-account-note" role="status">{{hostedOperatorArchiveNotice}}</p>
         {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_operator_mail_retry_title}}</h2>
+        {{#if hostedOperatorHasNoticeRetries}}
+        <ul class="hosted-operator-queue">
+          {{#hostedOperatorNoticeRetries}}
+          <li class="hosted-operator-queue-item">
+            <div class="hosted-operator-queue-meta">
+              <span class="hosted-operator-queue-name">{{kindLabel}}</span>
+              <span>{{../hostedTranslations.hosted_operator_mail_retry_recipient}}: {{recipient}}</span>
+              <span>{{../hostedTranslations.hosted_operator_archive_failures_attempts}}: {{attempts}}</span>
+              <span>{{../hostedTranslations.hosted_operator_mail_retry_next_attempt}}: {{nextAttempt}}</span>
+              {{#if lastError}}
+              <span>{{../hostedTranslations.hosted_operator_mail_retry_error}}: {{lastError}}</span>
+              {{/if}}
+            </div>
+          </li>
+          {{/hostedOperatorNoticeRetries}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_operator_mail_retry_empty}}</p>
+        {{/if}}
         {{/if}}
       </section>
     </main>

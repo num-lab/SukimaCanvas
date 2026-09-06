@@ -23,6 +23,7 @@ import {
   verifyDummyPassword,
   verifyPassword,
 } from "./passwords.mjs";
+import { NOTICE_KINDS } from "../notifications/notices.mjs";
 
 const { logger } = observability;
 
@@ -50,7 +51,7 @@ const MAX_PASSWORD_LENGTH = 128;
  * @param {{
  *   config: ServerConfig,
  *   store: ReturnType<typeof import("./store.mjs").createFileAccountStore>,
- *   mail: {send: (message: {to: string, subject: string, body: string}) => Promise<void>},
+ *   notifications: import("../notifications/service.mjs").NotificationService,
  *   captcha: ReturnType<typeof import("./captcha.mjs").createHostedCaptcha>,
  *   limiter: ReturnType<typeof import("./rate_limits.mjs").createRateLimiter>,
  *   templates: {
@@ -66,7 +67,8 @@ const MAX_PASSWORD_LENGTH = 128;
  * }} dependencies
  */
 function createHostedAccountRoutes(dependencies) {
-  const { config, store, mail, captcha, limiter, templates } = dependencies;
+  const { config, store, notifications, captcha, limiter, templates } =
+    dependencies;
   const clock = dependencies.clock || (() => Date.now());
   const {
     cookieOptions,
@@ -353,7 +355,12 @@ function createHostedAccountRoutes(dependencies) {
       });
     }
     const rawToken = await store.createVerificationToken(account.accountId);
-    await mail.send({
+    // The mail goes through the durable notice queue: a mail vendor outage
+    // becomes an observable retry, never a failed registration. The composed
+    // body carries the single-use link and is stored only in the queue and
+    // the vendor delivery path, never in a log.
+    await notifications.queueAccountMail({
+      kind: NOTICE_KINDS.ACCOUNT_VERIFICATION,
       to: email,
       subject: translate(
         templates.register,
@@ -617,7 +624,8 @@ function createHostedAccountRoutes(dependencies) {
       account.status === "active"
     ) {
       const rawToken = await store.createPasswordResetToken(account.accountId);
-      await mail.send({
+      await notifications.queueAccountMail({
+        kind: NOTICE_KINDS.ACCOUNT_PASSWORD_RESET,
         to: account.email,
         subject: translate(templates.forgot, ctx, "hosted_mail_reset_subject"),
         body: translate(templates.forgot, ctx, "hosted_mail_reset_body", {

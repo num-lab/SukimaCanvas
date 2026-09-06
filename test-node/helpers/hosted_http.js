@@ -155,6 +155,48 @@ function cookieAttributes(setCookie, name) {
 }
 
 /**
+ * Reads every message currently in the outbox.
+ *
+ * @param {string} outboxDir
+ * @returns {Promise<{to: string, subject: string, body: string}[]>}
+ */
+async function readOutboxMessages(outboxDir) {
+  const files = (await fs.readdir(outboxDir).catch(() => [])).sort();
+  /** @type {{to: string, subject: string, body: string}[]} */
+  const messages = [];
+  for (const file of files) {
+    messages.push(
+      JSON.parse(await fs.readFile(path.join(outboxDir, file), "utf8")),
+    );
+  }
+  return messages;
+}
+
+/**
+ * Polls the outbox until the wanted item appears. Mail delivery runs on a
+ * detached durable queue drain, so a request response does not guarantee the
+ * message file exists yet — the same bounded wait the Playwright helper uses.
+ *
+ * @template T
+ * @param {() => Promise<T | null | undefined>} read
+ * @returns {Promise<T>}
+ */
+async function pollOutbox(read) {
+  /** @type {T | null | undefined} */
+  let last = await read();
+  for (
+    let attempt = 0;
+    attempt < 100 && (last === null || last === undefined);
+    attempt += 1
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    last = await read();
+  }
+  assert.ok(last !== null && last !== undefined, "outbox message not found");
+  return last;
+}
+
+/**
  * Completes verification for the account by reading the latest verification
  * email from the outbox dir.
  *
@@ -163,24 +205,22 @@ function cookieAttributes(setCookie, name) {
  * @param {string} email
  */
 async function verifyAccount(app, outboxDir, email) {
-  const files = (await fs.readdir(outboxDir)).sort();
-  for (let index = files.length - 1; index >= 0; index -= 1) {
-    const message = JSON.parse(
-      await fs.readFile(path.join(outboxDir, files[index] || ""), "utf8"),
-    );
-    if (message.to === email && message.body.includes("/verify?token=")) {
-      const match = /https?:\/\/\S+/.exec(message.body);
-      assert.ok(match);
-      const url = new URL(match[0]);
-      const verified = await requestWithCookies(
-        app,
-        `${url.pathname}${url.search}`,
-      );
-      assert.equal(verified.statusCode, 303);
-      return;
-    }
-  }
-  assert.fail(`no verification email for ${email}`);
+  const message = await pollOutbox(async () =>
+    (await readOutboxMessages(outboxDir))
+      .reverse()
+      .find(
+        (candidate) =>
+          candidate.to === email && candidate.body.includes("/verify?token="),
+      ),
+  );
+  const match = /https?:\/\/\S+/.exec(message.body);
+  assert.ok(match);
+  const url = new URL(match[0]);
+  const verified = await requestWithCookies(
+    app,
+    `${url.pathname}${url.search}`,
+  );
+  assert.equal(verified.statusCode, 303);
 }
 
 /**
@@ -258,6 +298,8 @@ module.exports = {
   formValue,
   cookiePair,
   cookieAttributes,
+  readOutboxMessages,
+  pollOutbox,
   verifyAccount,
   registerAccount,
   signUpAndLogin,

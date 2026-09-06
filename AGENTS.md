@@ -81,9 +81,12 @@ keep the current device's); account disabling and explicit global revocation
 invalidate every session. CSRF tokens rotate on login and logout, so tokens
 rendered before a session transition are deterministically rejected. Raw
 hosted page templates are never served statically; their routes own them, and
-legacy mode 404s all account routes. Verification and recovery mail is queued
-as JSON files in `WBO_HOSTED_MAIL_OUTBOX_DIR` (default
-`<WBO_HOSTED_DATA_DIR>/mail-outbox`) until a mail vendor is selected. Account
+legacy mode 404s all account routes. Verification and recovery mail is
+composed in the request's language and queued through the notification
+service's durable queue (see below), so a mail vendor outage becomes an
+observable retry instead of a failed request, and is delivered as JSON files
+in `WBO_HOSTED_MAIL_OUTBOX_DIR` (default `<WBO_HOSTED_DATA_DIR>/mail-outbox`)
+until a mail vendor is selected. Account
 responses, logs, and emails must never carry passwords, password hashes, or
 verification tokens; hosted pages are session-aware and therefore `no-store`
 with `Referrer-Policy: no-referrer`. Hosted account limits and timeouts are
@@ -94,6 +97,31 @@ configured with `WBO_HOSTED_DATA_DIR`, `WBO_HOSTED_SESSION_MAX_AGE_MS`,
 `HOSTED_CLOCK` config field is an injectable clock adapter for isolated tests
 (never read from the environment); integration tests drive expiry and
 revocation through it instead of sleeping.
+
+Event lifecycle mail lives under
+[hosted_event/notifications/](./server/hosted_event/notifications/):
+[service.mjs](./server/hosted_event/notifications/service.mjs) is the single
+fan-out seam — reservation approval/rejection and Change Request decisions
+notify organizer members ([notices.mjs](./server/hosted_event/notifications/notices.mjs)
+composes every lifecycle notice bilingually, `zh-CN` first then `en`, with no
+links), event cancellation and Board Session close also reach every Event
+Membership holder, the archive close pipeline reports archive success and
+first-failure episodes, and the lifecycle pass sends one upcoming-start
+heads-up per scheduled session inside
+`WBO_HOSTED_NOTICE_UPCOMING_WINDOW_MS` (organizers only). Every notice is
+enqueued with a stable idempotency key (`<logical trigger>:<audience>:<accountId>`)
+into the durable store
+([store.mjs](./server/hosted_event/notifications/store.mjs), one
+`notifications.json` per data directory), so retries, repeated passes, and
+restarts never re-send a delivered notice; sent records shrink to
+content-free tombstones. Delivery drains through the shared mail adapter on
+detached, coalescing passes (kicked per enqueue and on the lifecycle-poker
+cadence — never inside a request or the close pipeline); failed attempts back
+off from `WBO_HOSTED_MAIL_RETRY_MS` (doubled, capped at one hour) and stay
+listed with recipient and last error on the operator console's "Mail
+delivery retries" section until the vendor accepts them. Trigger methods and
+the drain never throw: a notice problem must not fail the state change,
+request, or close pass that reported it.
 
 In hosted mode, Event admission lives under
 [hosted_event/events/](./server/hosted_event/events/),
@@ -437,8 +465,9 @@ internal and never public access credentials. A sealed session cannot be
 re-edited or reopened; its connected sockets end on a read-only completion
 state (`BOARDSTATE` carrying `eventClosed: true`, demoted to reader) and
 reconnects are refused by admission. Empty Board Sessions archive the same
-way. Failure notifications to organizers and lifecycle notices build on this
-state.
+way. Archive success and first-failure episodes enqueue organizer notices
+through the notification service, which also tells the event's members the
+event has closed.
 
 Published Canvas publication lives under
 [hosted_event/publication/](./server/hosted_event/publication/): Owner/Admin

@@ -4,6 +4,7 @@ import observability from "../../observability/index.mjs";
 import { resolveRequestClientIpSafe } from "../../socket/policy.mjs";
 import { isValidNormalizedEmail, normalizeEmail } from "../accounts/emails.mjs";
 import { resolveSignedInAccountFromRequest } from "../accounts/routes.mjs";
+import { NOTICE_KINDS } from "../notifications/notices.mjs";
 import {
   createFormSecurity,
   readFormBody,
@@ -65,6 +66,27 @@ const ARCHIVE_FAILURE_LABEL_KEYS = {
   internal: "hosted_archive_failure_internal",
 };
 
+/** Notice kind -> translation key for the operator console retry list. */
+const NOTICE_KIND_LABEL_KEYS = {
+  [NOTICE_KINDS.ACCOUNT_VERIFICATION]:
+    "hosted_notice_kind_account_verification",
+  [NOTICE_KINDS.ACCOUNT_PASSWORD_RESET]:
+    "hosted_notice_kind_account_password_reset",
+  [NOTICE_KINDS.RESERVATION_APPROVED]:
+    "hosted_notice_kind_reservation_approved",
+  [NOTICE_KINDS.RESERVATION_REJECTED]:
+    "hosted_notice_kind_reservation_rejected",
+  [NOTICE_KINDS.CHANGE_REQUEST_APPLIED]:
+    "hosted_notice_kind_change_request_applied",
+  [NOTICE_KINDS.CHANGE_REQUEST_REJECTED]:
+    "hosted_notice_kind_change_request_rejected",
+  [NOTICE_KINDS.EVENT_CANCELLED]: "hosted_notice_kind_event_cancelled",
+  [NOTICE_KINDS.SESSION_UPCOMING]: "hosted_notice_kind_session_upcoming",
+  [NOTICE_KINDS.SESSION_ARCHIVED]: "hosted_notice_kind_session_archived",
+  [NOTICE_KINDS.SESSION_ARCHIVE_FAILED]:
+    "hosted_notice_kind_session_archive_failed",
+};
+
 /**
  * HTTP flows for Organizer Applications and the Platform Operator console.
  *
@@ -83,6 +105,7 @@ const ARCHIVE_FAILURE_LABEL_KEYS = {
  *   integrationStore: ReturnType<typeof import("../integrations/store.mjs").createFileIntegrationStore>,
  *   limiter: ReturnType<typeof import("../accounts/rate_limits.mjs").createRateLimiter>,
  *   operatorEmails: Set<string>,
+ *   notificationStore?: ReturnType<typeof import("../notifications/store.mjs").createFileNotificationStore>,
  *   advanceEventLifecycle?: () => Promise<void>,
  *   templates: {
  *     organizerApply: HostedTemplate,
@@ -101,6 +124,7 @@ function createOrganizerRoutes(dependencies) {
     integrationStore,
     limiter,
     operatorEmails,
+    notificationStore,
     advanceEventLifecycle,
     templates,
   } = dependencies;
@@ -430,12 +454,37 @@ function createOrganizerRoutes(dependencies) {
             : "",
         };
       });
+    // The mail delivery retry list: notices the mail vendor has not accepted
+    // yet. Only authorized operators see recipients and errors; the queue
+    // itself keeps retrying with backoff in the background.
+    const noticeRetries = notificationStore
+      ? notificationStore.listRetrying().map((notice) => {
+          const labelKey =
+            NOTICE_KIND_LABEL_KEYS[
+              /** @type {keyof typeof NOTICE_KIND_LABEL_KEYS} */ (notice.kind)
+            ];
+          return {
+            kindLabel: labelKey
+              ? translate(template, ctx, labelKey)
+              : notice.kind,
+            recipient: notice.to,
+            attempts: notice.attempts,
+            lastAttempt: notice.lastAttemptAtMs
+              ? formatTimestamp(language, notice.lastAttemptAtMs)
+              : "",
+            nextAttempt: formatTimestamp(language, notice.nextAttemptAtMs),
+            lastError: notice.lastError || "",
+          };
+        })
+      : [];
     template.serveWithStatus(ctx.request, ctx.response, statusCode, {
       hostedOperatorPending: pending,
       hostedOperatorPendingCount: pending.length,
       hostedOperatorHasPending: pending.length > 0,
       hostedOperatorArchiveFailures: archiveFailures,
       hostedOperatorHasArchiveFailures: archiveFailures.length > 0,
+      hostedOperatorNoticeRetries: noticeRetries,
+      hostedOperatorHasNoticeRetries: noticeRetries.length > 0,
       hostedOperatorArchiveNotice: state.noticeKey
         ? translate(template, ctx, state.noticeKey)
         : undefined,

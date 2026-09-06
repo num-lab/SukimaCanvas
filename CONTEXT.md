@@ -121,7 +121,7 @@ An organizer's authenticated request to receive signed, at-least-once lifecycle 
 _Avoid_: Callback URL, polling hook, event listener
 
 **Lifecycle Notice**:
-A service notification about a reservation, event, archive, or integration delivery state sent to the intended organizer member or webhook subscriber.
+A service notification about a reservation, event, archive, or integration delivery state sent to the intended organizer member, event participant holding a membership, or webhook subscriber.
 _Avoid_: Marketing email, chat message, generic alert
 
 **External Participant Reference**:
