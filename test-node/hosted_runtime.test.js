@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { spawn } = require("node:child_process");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -218,4 +219,44 @@ test("legacy mode keeps the configured default-board redirect", async () => {
   } finally {
     await closeServer(app);
   }
+});
+
+test("a fail-closed startup reports its reason before exiting", async () => {
+  // The entry point's structured log record does not survive its own
+  // `process.exit`, so an operator deploying a misconfigured instance would
+  // otherwise see status 1 and an empty log. The reason must reach stderr even
+  // when the structured logger is silenced.
+  const historyDir = await createHistoryDirectory();
+  const hostedDir = await createHistoryDirectory();
+  const child = spawn(
+    process.execPath,
+    [path.join(__dirname, "..", "server", "server.mjs")],
+    {
+      cwd: path.join(__dirname, ".."),
+      env: {
+        ...process.env,
+        WBO_SILENT: "true",
+        WBO_HOSTED_MODE: "true",
+        WBO_HOSTED_DATA_DIR: hostedDir,
+        WBO_HISTORY_DIR: historyDir,
+        PORT: "0",
+        // Hosted mode fail-closes without it: participant identifiers, the
+        // webhook signature, and the export download token all derive from it.
+        AUTH_SECRET_KEY: "",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  const exitCode = await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", resolve);
+  });
+
+  assert.equal(exitCode, 1, `expected a refused start, got ${exitCode}`);
+  assert.match(stderr, /server\.start_failed/);
+  assert.match(stderr, /AUTH_SECRET_KEY/);
 });

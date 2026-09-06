@@ -3,6 +3,9 @@ services:
   www:
     volumes:
       - /opt/app/server-data:/opt/app/server-data
+      # Hosted Event Service state. Without this mount every account,
+      # reservation, ledger, and archive is lost on container rebuild.
+      - /opt/app/hosted-data:/opt/app/hosted-data
     ports:
       - "80:80"
     build:

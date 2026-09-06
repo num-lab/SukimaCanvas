@@ -37,8 +37,11 @@ Backup/PITR and recovery procedures, capacity commitments, alert hygiene,
 and the deployment constraints live in `docs/operations/runbook.md`; the
 recorded launch evidence (RPO/RTO drill, capacity rejection proofs,
 benchmark baselines, open items) lives in
-`docs/operations/launch-evidence.md`. Update both when the durability
-contract, capacity limits, or metric inventory change.
+`docs/operations/launch-evidence.md`; standing an instance up (required
+configuration, HTTPS and proxy requirements, data roots, first-Organizer
+bootstrap) lives in `docs/operations/deployment.md`. Update them when the
+durability contract, capacity limits, metric inventory, or startup
+configuration change.
 
 ## source of truth
 

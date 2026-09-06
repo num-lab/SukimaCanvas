@@ -1,3 +1,4 @@
+import { writeSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -558,6 +559,19 @@ if (entryArg && path.resolve(entryArg) === fileURLToPath(import.meta.url)) {
     logger.error("server.start_failed", {
       error,
     });
+    // The structured record above travels through the observability pipeline,
+    // which does not survive the immediate exit below: a misconfigured
+    // deployment would terminate with status 1 and no diagnostic at all, and
+    // fail-closed startup checks (a missing AUTH_SECRET_KEY, an unusable data
+    // directory) are exactly the failures an operator must be able to read.
+    // `writeSync` on the stderr descriptor is synchronous whether stderr is a
+    // TTY, a file, or a pipe, so the reason is always on the way out first.
+    writeSync(
+      2,
+      `server.start_failed: ${
+        error instanceof Error ? error.stack || error.message : String(error)
+      }\n`,
+    );
     process.exit(1);
   });
 }

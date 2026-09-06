@@ -166,6 +166,11 @@ credential, and webhook suites.
 
 ## 6. Deployment
 
+Standing an instance up for the first time — required configuration, the
+reverse-proxy and HTTPS requirements, the data roots to mount, and the
+first-Organizer bootstrap order — is [deployment.md](./deployment.md). This
+section covers the constraints that hold for every deploy afterwards.
+
 - **Single active application instance.** Exactly one process serves HTTP
   and Socket.IO for the deployment; scale-out is a post-launch decision
   that requires moving the seat/connection accounting first. Everything

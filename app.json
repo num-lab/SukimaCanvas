@@ -3,9 +3,9 @@
     "web": [
       {
         "type": "readiness",
-        "name": "anonymous board shell responds",
-        "path": "/boards/anonymous",
-        "content": "<svg id=\"canvas\"",
+        "name": "hosted service shell responds",
+        "path": "/",
+        "content": "hosted-shell",
         "timeout": 10,
         "attempts": 10,
         "wait": 2
