@@ -92,7 +92,9 @@ async function createReceiver() {
   );
   return {
     received,
-    responder: (/** @type {(res: import("http").ServerResponse) => void} */ next) => {
+    responder: (
+      /** @type {(res: import("http").ServerResponse) => void} */ next,
+    ) => {
       respond = next;
     },
     endpoint: (/** @type {string} */ suffix = "") =>
@@ -261,7 +263,10 @@ async function seedSecondOrganizer(fixture, email) {
  * @param {any} fixture
  * @param {{eventName: string, organizerId: string, actorAccountId: string}} options
  */
-async function seedSealedSession(fixture, { eventName, organizerId, actorAccountId }) {
+async function seedSealedSession(
+  fixture,
+  { eventName, organizerId, actorAccountId },
+) {
   const { organizerStore, holder } = fixture;
   const created = await organizerStore.createReservation({
     organizerId,
@@ -295,9 +300,15 @@ async function seedSealedSession(fixture, { eventName, organizerId, actorAccount
   assert.ok(session);
   await organizerStore.advanceLifecycle({ now: session.startsAtMs });
   await organizerStore.advanceLifecycle({ now: session.endsAtMs + MINUTE });
-  const archiveStore = createFileBoardArchiveStore({ dataDir: fixture.dataDir });
+  const archiveStore = createFileBoardArchiveStore({
+    dataDir: fixture.dataDir,
+  });
   const envelope = createDefaultStoredSvgEnvelope({ readonly: false }, 1);
-  const canvas = serializeStoredSvgEnvelope(envelope.prefix, [], envelope.suffix);
+  const canvas = serializeStoredSvgEnvelope(
+    envelope.prefix,
+    [],
+    envelope.suffix,
+  );
   const keyPrefix = `board-archives/${session.boardSessionId}`;
   await archiveStore.putArchive(`${keyPrefix}/canvas.svg`, canvas);
   await archiveStore.putArchive(`${keyPrefix}/manifest.json`, "{}");
@@ -342,7 +353,11 @@ test("the webhook store keeps the signing secret off every list projection and r
     );
     assert.equal(listed.length, 1);
     assert.ok(listed[0]);
-    assert.equal(listed[0].secret, "", "the projection never carries the secret");
+    assert.equal(
+      listed[0].secret,
+      "",
+      "the projection never carries the secret",
+    );
     assert.equal(listed[0].url, "https://hooks.example.com/sukima");
 
     // HTTP is a development-only convenience: the test composition allows it,
@@ -388,10 +403,11 @@ test("the subscription state machine refuses out-of-order transitions", async ()
     await fixture.webhookStore.suspendSubscription({
       subscriptionId: created.subscription.subscriptionId,
     });
-    const rotatedSuspended = await fixture.webhookStore.rotateSubscriptionSecret({
-      organizerId: fixture.organizerId,
-      subscriptionId: created.subscription.subscriptionId,
-    });
+    const rotatedSuspended =
+      await fixture.webhookStore.rotateSubscriptionSecret({
+        organizerId: fixture.organizerId,
+        subscriptionId: created.subscription.subscriptionId,
+      });
     assert.equal(rotatedSuspended.ok, true);
     assert.ok(rotatedSuspended.secret.startsWith("whsec_"));
     const stillSuspended = fixture.webhookStore
@@ -460,7 +476,10 @@ test("outbox enqueue is idempotent on the dedupe key", async () => {
       payload: { eventPublicId: "pub1" },
     });
     assert.equal(otherKind, true);
-    assert.equal(fixture.webhookStore.listDueDeliveries({ now: 1_000_000 }).length, 2);
+    assert.equal(
+      fixture.webhookStore.listDueDeliveries({ now: 1_000_000 }).length,
+      2,
+    );
   } finally {
     await fixture.webhookStore.flush();
   }
@@ -483,11 +502,16 @@ test("signed deliveries reach the receiver with verifiable signatures and public
       actorAccountId: fixture.ownerAccountId,
     });
 
-    await fixture.webhookPipeline.deriveLifecycleEvents({ now: fixture.holder.now });
+    await fixture.webhookPipeline.deriveLifecycleEvents({
+      now: fixture.holder.now,
+    });
     const pass = await fixture.webhookPipeline.runDueDeliveries({
       now: fixture.holder.now,
     });
-    assert.ok(pass.delivered >= 3, "opened, closed, and archive.ready delivered");
+    assert.ok(
+      pass.delivered >= 3,
+      "opened, closed, and archive.ready delivered",
+    );
     assert.equal(pass.failed, 0);
 
     // Three logical events, each delivered once.
@@ -495,10 +519,11 @@ test("signed deliveries reach the receiver with verifiable signatures and public
     const kinds = new Set(
       receiver.received.map((item) => item.headers["x-sukimacanvas-event"]),
     );
-    assert.deepEqual(
-      [...kinds].sort(),
-      ["archive.ready", "event.closed", "event.opened"],
-    );
+    assert.deepEqual([...kinds].sort(), [
+      "archive.ready",
+      "event.closed",
+      "event.opened",
+    ]);
 
     for (const delivery of receiver.received) {
       assert.equal(delivery.url, "/lifecycle");
@@ -509,7 +534,9 @@ test("signed deliveries reach the receiver with verifiable signatures and public
         signatureMatches(
           secret,
           delivery.body,
-          /** @type {string | undefined} */ (delivery.headers["x-sukimacanvas-signature"]),
+          /** @type {string | undefined} */ (
+            delivery.headers["x-sukimacanvas-signature"]
+          ),
         ),
         "the signature verifies with the subscription secret",
       );
@@ -542,7 +569,9 @@ test("signed deliveries reach the receiver with verifiable signatures and public
 
     // Idempotence: repeated derivation and delivery passes enqueue nothing
     // and re-send nothing.
-    await fixture.webhookPipeline.deriveLifecycleEvents({ now: fixture.holder.now });
+    await fixture.webhookPipeline.deriveLifecycleEvents({
+      now: fixture.holder.now,
+    });
     await fixture.webhookPipeline.runDueDeliveries({ now: fixture.holder.now });
     assert.equal(receiver.received.length, 3);
   } finally {
@@ -565,7 +594,9 @@ test("failed deliveries retry with backoff and then deliver", async () => {
       organizerId: fixture.organizerId,
       actorAccountId: fixture.ownerAccountId,
     });
-    await fixture.webhookPipeline.deriveLifecycleEvents({ now: fixture.holder.now });
+    await fixture.webhookPipeline.deriveLifecycleEvents({
+      now: fixture.holder.now,
+    });
 
     // Every attempt fails for now.
     receiver.responder((res) => {
@@ -616,7 +647,9 @@ test("24 hours of failures suspend the subscription, notify the Owner, and freez
       organizerId: fixture.organizerId,
       actorAccountId: fixture.ownerAccountId,
     });
-    await fixture.webhookPipeline.deriveLifecycleEvents({ now: fixture.holder.now });
+    await fixture.webhookPipeline.deriveLifecycleEvents({
+      now: fixture.holder.now,
+    });
     receiver.responder((res) => {
       res.statusCode = 500;
       res.end();
@@ -689,7 +722,9 @@ test("a restart recomposes from the durable state without duplicating events", a
       organizerId: fixture.organizerId,
       actorAccountId: fixture.ownerAccountId,
     });
-    await fixture.webhookPipeline.deriveLifecycleEvents({ now: fixture.holder.now });
+    await fixture.webhookPipeline.deriveLifecycleEvents({
+      now: fixture.holder.now,
+    });
     await fixture.webhookPipeline.runDueDeliveries({ now: fixture.holder.now });
     const before = receiver.received.length;
     assert.ok(before >= 3);
@@ -747,9 +782,14 @@ test("webhooks are organizer-scoped: another organizer's events never reach fore
       organizerId: fixture.organizerId,
       actorAccountId: fixture.ownerAccountId,
     });
-    await fixture.webhookPipeline.deriveLifecycleEvents({ now: fixture.holder.now });
+    await fixture.webhookPipeline.deriveLifecycleEvents({
+      now: fixture.holder.now,
+    });
     await fixture.webhookPipeline.runDueDeliveries({ now: fixture.holder.now });
-    assert.ok(receiverA.received.length >= 3, "organizer A receives its events");
+    assert.ok(
+      receiverA.received.length >= 3,
+      "organizer A receives its events",
+    );
     assert.equal(
       receiverB.received.length,
       0,
@@ -785,7 +825,9 @@ test("rotating the secret invalidates the previous signing material immediately"
     });
     assert.ok(rotated.ok);
     const newSecret = rotated.secret;
-    await fixture.webhookPipeline.deriveLifecycleEvents({ now: fixture.holder.now });
+    await fixture.webhookPipeline.deriveLifecycleEvents({
+      now: fixture.holder.now,
+    });
     await fixture.webhookPipeline.runDueDeliveries({ now: fixture.holder.now });
     assert.ok(receiver.received.length >= 3);
     for (const delivery of receiver.received) {
@@ -870,7 +912,6 @@ test("hostile endpoints and duplicate deliveries never crash the worker", async 
   }
 });
 
-
 test("the organizer console manages webhooks Owner-only with the secret revealed exactly once", async () => {
   const holder = { now: Date.now() };
   const server = await createHostedServer({
@@ -893,7 +934,10 @@ test("the organizer console manages webhooks Owner-only with the secret revealed
     });
     const ownerAccount = accountStore.getAccountByEmail(ownerEmail);
     assert.ok(ownerAccount);
-    const organizerStore = createFileOrganizerStore({ dataDir, clock: () => holder.now });
+    const organizerStore = createFileOrganizerStore({
+      dataDir,
+      clock: () => holder.now,
+    });
     const application = await organizerStore.submitApplication({
       accountId: ownerAccount.accountId,
       organizerName: "Console Collective",
@@ -935,7 +979,10 @@ test("the organizer console manages webhooks Owner-only with the secret revealed
     );
     assert.equal(created.statusCode, 200);
     const revealMatch = /whsec_[A-Za-z0-9_-]+/.exec(created.body);
-    assert.ok(revealMatch, "the secret is revealed once on the create response");
+    assert.ok(
+      revealMatch,
+      "the secret is revealed once on the create response",
+    );
 
     // The secret never renders again.
     const afterPage = await requestWithCookies(server.app, managePath, {
@@ -948,9 +995,10 @@ test("the organizer console manages webhooks Owner-only with the secret revealed
       "the secret is not rendered after the create response",
     );
     assert.ok(afterPage.body.includes("https://hooks.example.com/console"));
-    const subscriptionMatch = /organizers\/[A-Za-z0-9-]+\/webhooks\/([A-Za-z0-9-]+)\/rotate/.exec(
-      afterPage.body,
-    );
+    const subscriptionMatch =
+      /organizers\/[A-Za-z0-9-]+\/webhooks\/([A-Za-z0-9-]+)\/rotate/.exec(
+        afterPage.body,
+      );
     assert.ok(subscriptionMatch, "the subscription renders with its actions");
     const subscriptionId = subscriptionMatch[1];
 
@@ -1059,7 +1107,6 @@ test("the organizer console manages webhooks Owner-only with the secret revealed
     await closeServer(server.app);
   }
 });
-
 
 test("a slow endpoint is classified as a timeout and retried", async () => {
   const fixture = await createWebhookFixture(1_000_000);
@@ -1172,7 +1219,10 @@ test("resuming starts a fresh give-up window for the frozen records", async () =
     assert.equal(pass.suspended, 0, "no immediate re-suspension");
     const stillActive = fixture.webhookStore
       .listSubscriptionsForOrganizer(fixture.organizerId)
-      .find((subscription) => subscription.subscriptionId === suspended.subscriptionId);
+      .find(
+        (subscription) =>
+          subscription.subscriptionId === suspended.subscriptionId,
+      );
     assert.ok(stillActive);
     assert.equal(stillActive.status, "active");
   } finally {

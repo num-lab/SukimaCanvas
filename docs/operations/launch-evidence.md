@@ -140,21 +140,17 @@ one-time-reveal behaviors that keep secrets out of responses and logs.
 | --- | --- | --- |
 | Node suite (incl. recovery drill + capacity) | `npm run test-node` | 703 passing, 0 failing |
 | Browser suite | `npx playwright test` | 86 passing |
-| Lint | `npm run lint` | **failing** on 7 files (see below) |
+| Lint | `npm run lint` | clean |
 | Typecheck | `npm run typecheck` | clean |
 | Benchmarks | `npm run bench` | recorded in §3 |
 
-Re-checked 2026-09-06 on commit 4157ff7: `npm run lint` fails with
-formatter diffs on `server/hosted_event/notifications/notices.mjs`,
-`server/hosted_event/notifications/service.mjs`,
+Re-checked 2026-09-06 on commit 4157ff7: `npm run lint` was failing on
+seven files — formatter drift in `server/hosted_event/notifications/`,
 `server/hosted_event/organizers/routes.mjs`,
-`server/hosted_event/webhooks/store.mjs`,
-`test-node/hosted_capacity_limits.test.js`,
-`test-node/hosted_recovery_drill.test.js`, and
-`test-node/hosted_webhooks.test.js`. They are formatting only — no rule
-violations — and `npm run format` resolves them. CI runs only on `master`
-and pull requests into it, so `develop` never exercised this gate; the
-merge to `master` will fail until the sweep lands.
+`server/hosted_event/webhooks/store.mjs`, and three hosted test files,
+plus one unused constant. A `npm run format` sweep landed the fix. CI runs
+only on `master` and pull requests into it, so `develop` never exercises
+this gate on its own: run `npm run lint` before merging to `master`.
 
 ## 7. Open items (blocking launch, not this evidence)
 

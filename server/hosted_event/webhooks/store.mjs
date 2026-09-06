@@ -87,7 +87,11 @@ const DELIVERED_ENTRY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
  * @returns {boolean}
  */
 function isValidWebhookUrl(url, options = {}) {
-  if (typeof url !== "string" || url === "" || url.length > MAX_WEBHOOK_URL_LENGTH) {
+  if (
+    typeof url !== "string" ||
+    url === "" ||
+    url.length > MAX_WEBHOOK_URL_LENGTH
+  ) {
     return false;
   }
   let parsed;
@@ -96,7 +100,10 @@ function isValidWebhookUrl(url, options = {}) {
   } catch {
     return false;
   }
-  if (parsed.protocol !== "https:" && !(options.allowInsecureHttp === true && parsed.protocol === "http:")) {
+  if (
+    parsed.protocol !== "https:" &&
+    !(options.allowInsecureHttp === true && parsed.protocol === "http:")
+  ) {
     return false;
   }
   if (parsed.username !== "" || parsed.password !== "") return false;
@@ -394,7 +401,9 @@ function createFileWebhookStore(options) {
    */
   async function suspendSubscription(input) {
     ensureLoaded();
-    const subscription = subscriptionsById.get(String(input.subscriptionId || ""));
+    const subscription = subscriptionsById.get(
+      String(input.subscriptionId || ""),
+    );
     if (!subscription || subscription.status !== "active") return false;
     subscription.status = "suspended";
     subscription.suspendedAtMs = clock();
@@ -612,9 +621,7 @@ function createFileWebhookStore(options) {
       if (entry.payload === null) continue;
       const fullyDelivered =
         entry.deliveries.length > 0 &&
-        entry.deliveries.every(
-          (delivery) => delivery.deliveredAtMs !== null,
-        );
+        entry.deliveries.every((delivery) => delivery.deliveredAtMs !== null);
       if (!fullyDelivered || entry.createdAtMs + retentionMs > now) continue;
       entry.payload = /** @type {Record<string, unknown>} */ ({});
       entry.deliveries = [];

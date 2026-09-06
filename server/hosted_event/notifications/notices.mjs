@@ -420,7 +420,10 @@ the archive step when "${name}" closed did not complete (reason: ${reason.en}). 
  */
 function composeWebhookSuspended(input) {
   const host = input.endpointHost || "your webhook endpoint";
-  const suspendedAt = formatServiceTime(input.suspendedAtMs, input.offsetMinutes);
+  const suspendedAt = formatServiceTime(
+    input.suspendedAtMs,
+    input.offsetMinutes,
+  );
   return assemble(
     {
       subject: `Webhook 订阅已暂停（${host}）`,

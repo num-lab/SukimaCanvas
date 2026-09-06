@@ -274,7 +274,8 @@ test("operational recovery drill: restart rebuilds every durable subsystem and f
         // pending because the receiver is not consulted yet.
         await webhookPipeline.deriveLifecycleEvents();
         assert.ok(
-          webhookStore.listDueDeliveries({ now: fixture.holder.now }).length >= 2,
+          webhookStore.listDueDeliveries({ now: fixture.holder.now }).length >=
+            2,
         );
 
         await fixture.organizerStore.flush();
@@ -359,7 +360,10 @@ test("operational recovery drill: restart rebuilds every durable subsystem and f
         // --- task recovery: the failed archive is visible and due ---------
         const failed = restartedOrganizerStore.listArchiveFailedBoardSessions();
         assert.equal(failed.length, 1);
-        assert.equal(failed[0]?.boardSessionId, fixture.boardSession.boardSessionId);
+        assert.equal(
+          failed[0]?.boardSessionId,
+          fixture.boardSession.boardSessionId,
+        );
         assert.equal(failed[0]?.archiveFailure?.code, "storage_write_failed");
         assert.deepEqual(
           restartedOrganizerStore
@@ -407,7 +411,10 @@ test("operational recovery drill: restart rebuilds every durable subsystem and f
         assert.ok(account && account.status === "active");
 
         // --- notices: the retrying notice survives with its state ---------
-        assert.equal((await restartedNotificationStore.listRetrying()).length, 1);
+        assert.equal(
+          (await restartedNotificationStore.listRetrying()).length,
+          1,
+        );
 
         // --- recovery completes: the archive seals, the queues drain ------
         assert.ok(
@@ -516,15 +523,11 @@ test("a fresh process answers admission decisions from durable state alone after
       cookieHeader: cookieFor(fixture.owner.rawSessionId),
     });
     assert.equal(verdict.ok, true);
-    assert.equal(
-      /** @type {{role: string}} */ (verdict).role,
-      "moderator",
-    );
+    assert.equal(/** @type {{role: string}} */ (verdict).role, "moderator");
   } finally {
     live.done();
   }
 });
-
 
 test("restore drill: a crash-consistent backup plus re-shipped ledger rebuilds every write", async () => {
   await createSocketScenario(
@@ -558,9 +561,7 @@ test("restore drill: a crash-consistent backup plus re-shipped ledger rebuilds e
 
       // Take the crash-consistent backup: a plain recursive copy of the data
       // root, exactly what a volume snapshot captures.
-      const backupDir = await fs.mkdtemp(
-        path.join(os.tmpdir(), "wbo-backup-"),
-      );
+      const backupDir = await fs.mkdtemp(path.join(os.tmpdir(), "wbo-backup-"));
       await fs.cp(dataDir, backupDir, { recursive: true });
 
       // Accept a second write AFTER the backup: only the re-shipped ledger
@@ -626,7 +627,7 @@ test("restore drill: a crash-consistent backup plus re-shipped ledger rebuilds e
         crypto
           .createHash("sha256")
           .update(
-            (
+            `${(
               await fs.readFile(
                 path.join(
                   restoreDir,
@@ -634,7 +635,9 @@ test("restore drill: a crash-consistent backup plus re-shipped ledger rebuilds e
                   `${fixture.event.boardName}.jsonl`,
                 ),
               )
-            ).toString("utf8").replace(/\n$/, "") + "\n",
+            )
+              .toString("utf8")
+              .replace(/\n$/, "")}\n`,
           )
           .digest("hex"),
         "the archived ledger object matches the re-shipped file",

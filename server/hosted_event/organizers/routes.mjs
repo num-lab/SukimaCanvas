@@ -1082,8 +1082,9 @@ function createOrganizerRoutes(dependencies) {
     // carries the signing secret — it is revealed exactly once through
     // `webhookReveal` right after create or rotate.
     const webhooks = isOwner
-      ? webhookStore.listSubscriptionsForOrganizer(organizerId).map(
-          (subscription) => ({
+      ? webhookStore
+          .listSubscriptionsForOrganizer(organizerId)
+          .map((subscription) => ({
             subscriptionId: subscription.subscriptionId,
             url: subscription.url,
             isActive: subscription.status === "active",
@@ -1099,8 +1100,7 @@ function createOrganizerRoutes(dependencies) {
             revokedAt: subscription.revokedAtMs
               ? formatTimestamp(language, subscription.revokedAtMs)
               : undefined,
-          }),
-        )
+          }))
       : [];
     template.serveWithStatus(ctx.request, ctx.response, statusCode, {
       hostedOrganizerId: organizerId,

@@ -14,7 +14,6 @@ const {
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
 
 /** The confirmed platform commitments. */
 const SESSION_LIMIT = 20;
@@ -49,7 +48,12 @@ async function createStore(now) {
     operatorAccountId: "operator",
   });
   assert.ok(approved.ok);
-  return { holder, store, organizerId: /** @type {string} */ (approved.organizerId), ownerAccountId: owner.accountId };
+  return {
+    holder,
+    store,
+    organizerId: /** @type {string} */ (approved.organizerId),
+    ownerAccountId: owner.accountId,
+  };
 }
 
 /**
@@ -90,7 +94,11 @@ async function approveOverlapping(fixture, index, seats) {
 test("capacity: 20 overlapping sessions with 1,000 committed seats are approved exactly at the limits", async () => {
   const fixture = await createStore(1_000_000);
   for (let index = 0; index < SESSION_LIMIT; index += 1) {
-    const approved = await approveOverlapping(fixture, index, SEATS_PER_SESSION);
+    const approved = await approveOverlapping(
+      fixture,
+      index,
+      SEATS_PER_SESSION,
+    );
     assert.ok(
       approved.ok,
       `session ${index + 1} of ${SESSION_LIMIT} must be approved`,

@@ -582,9 +582,7 @@ function createNotificationService(dependencies) {
    */
   async function onWebhookSubscriptionSuspended(input) {
     const suspendedAtMs =
-      typeof input.suspendedAtMs === "number"
-        ? input.suspendedAtMs
-        : clock();
+      typeof input.suspendedAtMs === "number" ? input.suspendedAtMs : clock();
     await fanOut({
       kind: NOTICE_KINDS.WEBHOOK_SUSPENDED,
       key: `webhook-suspended:${input.subscriptionId}:${suspendedAtMs}`,
