@@ -24,6 +24,9 @@ import {
   derivePublishedCanvas,
   listPublishedContributorIds,
 } from "../publication/canvas.mjs";
+
+import { EXPORT_FAILURE_CODES } from "../export/render.mjs";
+import { EXPORT_JOB_FAILURE_CODES } from "../export/pipeline.mjs";
 import { formatServiceTime } from "../service_time.mjs";
 
 const { logger } = observability;
@@ -42,6 +45,12 @@ const EVENT_STATUS_KEYS = {
   open: "hosted_event_status_open",
   ended: "hosted_event_status_ended",
 };
+
+/** Export job failure codes that carry their own console label. */
+const EXPORT_FAILURE_LABEL_CODES = new Set([
+  ...Object.values(EXPORT_FAILURE_CODES),
+  ...Object.values(EXPORT_JOB_FAILURE_CODES),
+]);
 
 /**
  * HTTP flows for Event discovery, Access Code admission, Event Membership,
@@ -79,6 +88,9 @@ const EVENT_STATUS_KEYS = {
  *   publicationStore: ReturnType<typeof import("../publication/store.mjs").createFilePublicationStore>,
  *   archiveStore: ReturnType<typeof import("../archive/store.mjs").createFileBoardArchiveStore>,
  *   participantIdentifierFor: (eventId: string, accountId: string) => string,
+
+ *   exportStore: ReturnType<typeof import("../export/store.mjs").createFileBoardExportStore>,
+ *   exportPipeline: ReturnType<typeof import("../export/pipeline.mjs").createBoardExportPipeline>,
  *   limiter: ReturnType<typeof import("../accounts/rate_limits.mjs").createRateLimiter>,
  *   advanceEventLifecycle?: () => Promise<void>,
  *   templates: {
@@ -101,6 +113,9 @@ function createEventRoutes(dependencies) {
     publicationStore,
     archiveStore,
     participantIdentifierFor,
+
+    exportStore,
+    exportPipeline,
     limiter,
     templates,
   } = dependencies;
@@ -163,6 +178,21 @@ function createEventRoutes(dependencies) {
    */
   function formatTimestamp(ms) {
     return formatServiceTime(ms, offsetMinutes);
+  }
+
+  /**
+   * A stable, filesystem-safe download filename for an export: the event's
+   * name reduced to a slug, disambiguated by the export id prefix.
+   *
+   * @param {string} eventName
+   * @param {string} exportId
+   * @returns {string}
+   */
+  function exportFilename(eventName, exportId) {
+    const slug =
+      eventName.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") ||
+      "board";
+    return `${slug}-${exportId.slice(0, 8)}.png`;
   }
 
   // --- public discovery ----------------------------------------------------
@@ -626,6 +656,10 @@ function createEventRoutes(dependencies) {
    * @returns {Promise<void>}
    */
   async function renderManageEvent(ctx, organizerId, event, statusCode, state) {
+    // The console renders Board Session and export-job state, so it always
+    // advances the durable lifecycle (and the idempotent pipelines) first —
+    // refreshing the page shows the current truth, not the last poker pass.
+    await advanceLifecycleNow();
     const template = templates.organizerEvent;
     const lifecycle = eventLifecycleState(event, clock());
     // The governance trail: per-event moderators, current bans projected to
@@ -683,6 +717,47 @@ function createEventRoutes(dependencies) {
       publication?.status === "published"
         ? `hosted_publication_audience_${publication.audience}`
         : "";
+
+    // The Board Image Export queue: one line per job with its lifecycle state.
+    // A succeeded job's download link is derived from the export id and its
+    // finish time, so the console always renders the currently valid link —
+    // revocation or expiry simply removes it.
+    const exportJobs = exportStore
+      .listExportsForEvent(event.eventId, { limit: 20 })
+      .map((record) => {
+        const token = exportStore.downloadHrefToken(record.exportId);
+        const expiry = exportStore.downloadLinkExpiry(record.exportId);
+        const failureCode = record.failure
+          ? EXPORT_FAILURE_LABEL_CODES.has(record.failure.code)
+            ? record.failure.code
+            : "other"
+          : undefined;
+        return {
+          exportId: record.exportId,
+          filename: exportFilename(event.name, record.exportId),
+          statusLabel: translate(
+            template,
+            ctx,
+            `hosted_export_status_${record.status}`,
+          ),
+          createdAt: formatTimestamp(record.createdAtMs),
+          failureLabel: failureCode
+            ? translate(template, ctx, `hosted_export_failure_${failureCode}`)
+            : undefined,
+          dimensions:
+            record.result === null
+              ? undefined
+              : `${record.result.width}×${record.result.height}`,
+          downloadHref:
+            token && expiry
+              ? `organizers/${organizerId}/events/${event.eventId}/exports/${record.exportId}/download?token=${encodeURIComponent(token)}`
+              : undefined,
+          downloadExpiresAt: expiry
+            ? formatTimestamp(expiry.expiresAtMs)
+            : undefined,
+          canRevoke: Boolean(token && expiry),
+        };
+      });
     template.serveWithStatus(ctx.request, ctx.response, statusCode, {
       hostedOrganizerId: organizerId,
       hostedEventId: event.eventId,
@@ -742,6 +817,10 @@ function createEventRoutes(dependencies) {
       hostedPublicationViewHref: publicationViewable
         ? `events/${event.publicId}/canvas`
         : undefined,
+
+      // Image export management.
+      hostedEventExportJobs: exportJobs,
+      hostedEventHasExportJobs: exportJobs.length > 0,
       csrfToken: ensureCsrfToken(ctx),
     });
   }
@@ -1338,6 +1417,194 @@ function createEventRoutes(dependencies) {
     );
   }
 
+  // --- Board Image Export ----------------------------------------------------
+
+  /**
+   * Requests an asynchronous PNG Image Export of the event's Board Session.
+   * Only a successfully archived session qualifies: the job renders the sealed
+   * Private Board Archive in the background, never a still-editable live
+   * Board Session, and raw SVG is never exposed. Creation is idempotent while
+   * a job is pending. Owner/Admin only.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOrganizerEventExports(ctx) {
+    if (ctx.request.method !== "POST") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const organizerId = ctx.params.organizerId || "";
+    const managed = requireManagedEvent(
+      ctx,
+      organizerId,
+      ctx.params.eventId || "",
+    );
+    if (!managed) return;
+    const form = await readFormBody(ctx.request);
+    if (!requestHasValidCsrf(ctx.request, form)) {
+      await renderManageEvent(ctx, organizerId, managed.event, 403, {
+        errorKey: "hosted_error_csrf",
+      });
+      return;
+    }
+    // Advance the durable lifecycle (closes included) so the request sees the
+    // authoritative session state, not a stale in-flight close.
+    await advanceLifecycleNow();
+    const session = organizerStore.getBoardSessionForEvent(
+      managed.event.eventId,
+    );
+    const requested = await exportPipeline.requestExport({
+      boardSessionId: session?.boardSessionId || "",
+      eventId: managed.event.eventId,
+      organizerId,
+      requestedByAccountId: managed.account.accountId,
+    });
+    if (!requested.ok) {
+      await renderManageEvent(ctx, organizerId, managed.event, 409, {
+        errorKey: "hosted_export_error_not_archived",
+      });
+      return;
+    }
+    logger.info("hosted.board_export_requested", {
+      organizer_id: organizerId,
+      event_id: managed.event.eventId,
+      export_id: requested.export.exportId,
+      created: requested.created,
+    });
+    seeOther(
+      ctx,
+      publicPath(
+        config,
+        `/organizers/${organizerId}/events/${managed.event.eventId}`,
+      ),
+    );
+  }
+
+  /**
+   * The controlled export download path. The link must be presented by an
+   * authorized organizer member, carry the export's exact derived token, and
+   * fall inside the link's validity window — revocation or deletion kills it
+   * immediately. Serves the sanitized PNG bytes only, never the archive.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOrganizerEventExportDownload(ctx) {
+    if (ctx.request.method !== "GET") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const organizerId = ctx.params.organizerId || "";
+    const managed = requireManagedEvent(
+      ctx,
+      organizerId,
+      ctx.params.eventId || "",
+    );
+    if (!managed) return;
+    const exportId = ctx.params.exportId || "";
+    const verdict = exportStore.verifyExportDownloadToken({
+      exportId,
+      token: ctx.url.searchParams.get("token") || "",
+      nowMs: clock(),
+    });
+    if (!verdict.ok) throw new BoundaryError(404, "export_not_found");
+    const bytes = await exportStore.readExportBytes(exportId);
+    if (!bytes) throw new BoundaryError(404, "export_not_found");
+    const filename = exportFilename(managed.event.name, exportId);
+    ctx.response.writeHead(200, {
+      "Content-Type": "image/png",
+      "Content-Length": bytes.length,
+      // A generated image must never be sniffed into another type, executed,
+      // or treated as an active document.
+      "X-Content-Type-Options": "nosniff",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Security-Policy": "default-src 'none'; sandbox",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      // An authorized, expiring artifact is never cacheable.
+      "Cache-Control": "no-store",
+    });
+    ctx.response.end(bytes);
+  }
+
+  /**
+   * Revokes a succeeded export's download link. The stored result stays; every
+   * outstanding link stops working immediately. Owner/Admin only.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOrganizerEventExportRevoke(ctx) {
+    if (ctx.request.method !== "POST") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const organizerId = ctx.params.organizerId || "";
+    const managed = requireManagedEvent(
+      ctx,
+      organizerId,
+      ctx.params.eventId || "",
+    );
+    if (!managed) return;
+    const form = await readFormBody(ctx.request);
+    if (!requestHasValidCsrf(ctx.request, form)) {
+      await renderManageEvent(ctx, organizerId, managed.event, 403, {
+        errorKey: "hosted_error_csrf",
+      });
+      return;
+    }
+    await exportStore.revokeExportDownload(ctx.params.exportId || "");
+    logger.info("hosted.board_export_link_revoked", {
+      organizer_id: organizerId,
+      event_id: managed.event.eventId,
+      export_id: ctx.params.exportId || "",
+    });
+    seeOther(
+      ctx,
+      publicPath(
+        config,
+        `/organizers/${organizerId}/events/${managed.event.eventId}`,
+      ),
+    );
+  }
+
+  /**
+   * Deletes an export job and its stored result. Any outstanding download
+   * link dies with the record. Owner/Admin only.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOrganizerEventExportDelete(ctx) {
+    if (ctx.request.method !== "POST") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const organizerId = ctx.params.organizerId || "";
+    const managed = requireManagedEvent(
+      ctx,
+      organizerId,
+      ctx.params.eventId || "",
+    );
+    if (!managed) return;
+    const form = await readFormBody(ctx.request);
+    if (!requestHasValidCsrf(ctx.request, form)) {
+      await renderManageEvent(ctx, organizerId, managed.event, 403, {
+        errorKey: "hosted_error_csrf",
+      });
+      return;
+    }
+    await exportStore.deleteExport(ctx.params.exportId || "");
+    logger.info("hosted.board_export_deleted", {
+      organizer_id: organizerId,
+      event_id: managed.event.eventId,
+      export_id: ctx.params.exportId || "",
+    });
+    seeOther(
+      ctx,
+      publicPath(
+        config,
+        `/organizers/${organizerId}/events/${managed.event.eventId}`,
+      ),
+    );
+  }
+
   // --- event moderator grants ----------------------------------------------
 
   /**
@@ -1481,6 +1748,11 @@ function createEventRoutes(dependencies) {
     serveOrganizerEventPublication,
     serveOrganizerEventPublicationRevoke,
     servePublishedCanvas,
+
+    serveOrganizerEventExports,
+    serveOrganizerEventExportDownload,
+    serveOrganizerEventExportRevoke,
+    serveOrganizerEventExportDelete,
   };
 }
 

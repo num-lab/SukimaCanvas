@@ -79,10 +79,14 @@ const PNG_SIGNATURE = Buffer.from([
 ]);
 
 /**
+ * Decodes the buffer as a PNG image: verifies the signature, every chunk CRC,
+ * the IHDR dimensions, and the IEND trailer. Shared by the Brand Asset sniff
+ * path and the Board Image Export's structural output validation.
+ *
  * @param {Buffer} buffer
  * @returns {SniffResult}
  */
-function decodePng(buffer) {
+export function decodePng(buffer) {
   let offset = PNG_SIGNATURE.length;
   let sawHeader = false;
   let sawEnd = false;

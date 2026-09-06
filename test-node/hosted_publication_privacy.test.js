@@ -24,6 +24,9 @@ const {
 const {
   createFilePublicationStore,
 } = require("../server/hosted_event/publication/store.mjs");
+const {
+  createFileBoardExportStore,
+} = require("../server/hosted_event/export/store.mjs");
 const { BoundaryError } = require("../server/http/boundary_errors.mjs");
 const {
   HOSTED_CSRF_COOKIE_NAME,
@@ -80,6 +83,15 @@ function composeRoutes(fixture) {
     publicationStore: fixture.publicationStore,
     archiveStore: fixture.archiveStore,
     participantIdentifierFor,
+    // The manage page renders the export queue, so the real export store
+    // backs the composition; the pipeline itself is never invoked here.
+    exportStore: createFileBoardExportStore({
+      dataDir: fixture.dataDir,
+      clock: () => fixture.holder.now,
+      linkTtlMs: 24 * 60 * 60 * 1000,
+      hmacKey: "publication-test-secret",
+    }),
+    exportPipeline: /** @type {any} */ ({}),
     limiter: createRateLimiter({ clock: () => fixture.holder.now }),
     advanceEventLifecycle: fixture.hostedModule.refreshEventLifecycle,
     templates,

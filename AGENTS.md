@@ -465,6 +465,32 @@ link-audience publish) share token immediately, and every refusal renders one
 uniform 404. The published page is `no-store` with `X-Robots-Tag` and meta
 `robots` noindex.
 
+Asynchronous Board Image Export lives under
+[hosted_event/export/](./server/hosted_event/export/): Owner/Admin request a
+PNG projection of a successfully archived Board Session from the organizer
+event console (POST
+`/organizers/{organizerId}/events/{eventId}/exports`); the pipeline reads the
+sealed archive only (manifest integrity hash verified, never a live Board
+Session, no raw SVG exposure), re-wraps the drawing area in a sanitized SVG
+without `data-wbo-*` attribution, and rasterizes it with `@resvg/resvg-js`
+into an ordinary PNG — white background, content bounds plus margin, longest
+edge capped at 8192 px — whose chunks are checked against a strict allowlist
+so attribution, Participant Identifiers, audit data, or object keys can never
+appear in the output. Oversized or unrenderable content fails deterministically
+(`archive_unavailable`, `archive_invalid`, `render_failed`,
+`output_limit_exceeded`, `output_metadata_rejected`, `storage_write_failed`).
+Job records and PNG bytes live under `<WBO_HOSTED_DATA_DIR>/board-exports/`
+via [export/store.mjs](./server/hosted_event/export/store.mjs); jobs survive
+restarts (`processing` jobs are re-queued), retry failed renders up to three
+attempts paced by `WBO_HOSTED_BOARD_EXPORT_RETRY_MS`, and then stay settled —
+repeated passes never re-run succeeded work. Export passes are kicked on the
+lifecycle-poker cadence but detached: rendering can take seconds, so no
+request path ever blocks on it. The download route
+(`GET /organizers/{organizerId}/events/{eventId}/exports/{exportId}/download`)
+requires an authorized Owner/Admin session plus an HMAC-derived token; links
+are valid for `WBO_HOSTED_BOARD_EXPORT_LINK_TTL_MS` (24 h) and die immediately
+on revoke or delete.
+
 ### tests, benchmarks, and profiling
 
 Use [test-node](./test-node) for Node tests and

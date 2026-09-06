@@ -830,3 +830,40 @@ h1 {
 .hosted-event-published-link {
   margin: 12px 0 0;
 }
+
+.hosted-export-list {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.hosted-export-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--hosted-border);
+  border-radius: 2px;
+  font-size: 13px;
+}
+
+.hosted-export-status {
+  font-weight: 600;
+}
+
+.hosted-export-time,
+.hosted-export-expires {
+  color: var(--hosted-muted);
+  font-size: 12px;
+}
+
+.hosted-export-failure {
+  color: #8f2f2f;
+  font-size: 12px;
+}
+
+.hosted-export-item .hosted-reservation-action {
+  margin: 0 0 0 auto;
+}

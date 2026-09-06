@@ -249,6 +249,11 @@ const hostedBoardArchiveCloses = meter.createCounter(
     unit: "{close}",
   },
 );
+const hostedBoardExports = meter.createCounter("wbo.hosted.board_export", {
+  description:
+    'Count of Board Image Export job attempts, labeled by "wbo.hosted.board_export.outcome"; error.type carries the deterministic failure code for failed attempts.',
+  unit: "{export}",
+});
 const loadedBoardsGauge = meter.createObservableGauge("wbo.board.loaded", {
   description: "Current number of board instances loaded in server memory.",
   unit: "{board}",
@@ -863,6 +868,24 @@ function recordBoardArchiveClose(outcome, failureCode) {
 }
 
 /**
+ * Records one Board Image Export job attempt outcome: the job either produced
+ * its sanitized PNG ("succeeded") or failed with a deterministic failure code
+ * while staying recoverable or terminally failed on its record.
+ *
+ * @param {"succeeded" | "failed"} outcome
+ * @param {string} [failureCode] deterministic failure code for failed attempts
+ * @returns {void}
+ */
+function recordBoardExport(outcome, failureCode) {
+  /** @type {{[key: string]: string}} */
+  const attributes = { "wbo.hosted.board_export.outcome": outcome };
+  if (outcome === "failed" && typeof failureCode === "string" && failureCode) {
+    attributes[ATTR_ERROR_TYPE] = failureCode;
+  }
+  hostedBoardExports.add(1, attributes);
+}
+
+/**
  * @param {string} operation
  * @param {string | undefined} boardName
  * @param {number} durationSeconds
@@ -966,6 +989,7 @@ const logger = {
 
 const observabilityMetrics = {
   recordBoardArchiveClose,
+  recordBoardExport,
   recordBoardMessage,
   changeHttpActiveRequests,
   recordBoardOperationDuration,
