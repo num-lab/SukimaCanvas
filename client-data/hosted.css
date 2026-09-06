@@ -790,3 +790,43 @@ h1 {
   width: 100%;
   color: var(--hosted-muted);
 }
+
+.hosted-canvas-frame {
+  margin: 12px 0 16px;
+  padding: 12px;
+  border: 1px solid var(--hosted-border);
+  border-radius: 4px;
+  background: var(--hosted-surface);
+}
+
+.hosted-canvas-frame svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.hosted-contributor-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.hosted-contributor-item {
+  padding: 3px 8px;
+  border: 1px solid var(--hosted-border);
+  border-radius: 2px;
+  font-size: 12px;
+}
+
+.hosted-publication-share-url {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.hosted-event-published-link {
+  margin: 12px 0 0;
+}

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { BoundaryError } from "../../http/boundary_errors.mjs";
 import { publicPath } from "../../http/request_url.mjs";
 import observability from "../../observability/index.mjs";
@@ -13,12 +14,16 @@ import {
 } from "../http_forms.mjs";
 import { createStoreLifecycleAdvancer } from "../lifecycle.mjs";
 import { accessCodeMatches } from "../memberships/access_codes.mjs";
-import { MAX_REASON_LENGTH } from "../moderation/store.mjs";
 import { moderationSocketEffects } from "../moderation/socket_effects.mjs";
+import { MAX_REASON_LENGTH } from "../moderation/store.mjs";
 import {
   eventLifecycleState,
   MAX_EVENT_TAGLINE_LENGTH,
 } from "../organizers/store.mjs";
+import {
+  derivePublishedCanvas,
+  listPublishedContributorIds,
+} from "../publication/canvas.mjs";
 import { formatServiceTime } from "../service_time.mjs";
 
 const { logger } = observability;
@@ -59,6 +64,11 @@ const EVENT_STATUS_KEYS = {
  * and are served through a controlled read path that can never become an
  * executable page.
  *
+ * The Published Canvas flows also live here. Owner/Admins derive a sanitized,
+ * read-only presentation from the event's Private Board Archive and choose
+ * its Publication Audience; the public read route re-checks that audience on
+ * every read, so revocation takes effect immediately.
+ *
  * @param {{
  *   config: ServerConfig,
  *   accountStore: ReturnType<typeof import("../accounts/store.mjs").createFileAccountStore>,
@@ -66,12 +76,16 @@ const EVENT_STATUS_KEYS = {
  *   membershipStore: ReturnType<typeof import("../memberships/store.mjs").createFileEventMembershipStore>,
  *   moderation: ReturnType<typeof import("../moderation/index.mjs").createEventModeration>,
  *   assetStore: ReturnType<typeof import("../assets/store.mjs").createFileBrandAssetStore>,
+ *   publicationStore: ReturnType<typeof import("../publication/store.mjs").createFilePublicationStore>,
+ *   archiveStore: ReturnType<typeof import("../archive/store.mjs").createFileBoardArchiveStore>,
+ *   participantIdentifierFor: (eventId: string, accountId: string) => string,
  *   limiter: ReturnType<typeof import("../accounts/rate_limits.mjs").createRateLimiter>,
  *   advanceEventLifecycle?: () => Promise<void>,
  *   templates: {
  *     home: HostedTemplate,
  *     event: HostedTemplate,
  *     organizerEvent: HostedTemplate,
+ *     publishedCanvas: HostedTemplate,
  *   },
  *   clock?: () => number,
  * }} dependencies
@@ -84,6 +98,9 @@ function createEventRoutes(dependencies) {
     membershipStore,
     moderation,
     assetStore,
+    publicationStore,
+    archiveStore,
+    participantIdentifierFor,
     limiter,
     templates,
   } = dependencies;
@@ -97,6 +114,36 @@ function createEventRoutes(dependencies) {
    */
   function signedInAccount(ctx) {
     return resolveSignedInAccountFromRequest(accountStore, ctx.request);
+  }
+
+  /**
+   * Whether the account holds the Owner/Admin role of the organizer.
+   *
+   * @param {string} organizerId
+   * @param {string} accountId
+   * @returns {boolean}
+   */
+  function isOwnerAdminRole(organizerId, accountId) {
+    const role = organizerStore.getMemberRole(organizerId, accountId);
+    return role === "owner" || role === "admin";
+  }
+
+  /**
+   * The one definition of Publication Audience admission, shared by the
+   * event-page link, the manage page's view link, and the public read route:
+   * a live published record admits the audience it names — organizer members
+   * or event members. The `link` audience is admitted only through its own
+   * unguessable share URL, never through the bare one.
+   *
+   * @param {{isOrganizerMember: boolean, isMember: boolean}} viewer
+   * @param {import("../publication/store.mjs").StoredPublication} publication
+   * @returns {boolean}
+   */
+  function publicationAudienceAdmits(viewer, publication) {
+    if (publication.status !== "published") return false;
+    if (publication.audience === "organizer") return viewer.isOrganizerMember;
+    if (publication.audience === "members") return viewer.isMember;
+    return false;
   }
 
   /**
@@ -218,14 +265,23 @@ function createEventRoutes(dependencies) {
       : null;
     const session = organizerStore.getBoardSessionForEvent(event.eventId);
     const viewerIsOwnerAdmin = account
-      ? (() => {
-          const role = organizerStore.getMemberRole(
-            event.organizerId,
-            account.accountId,
-          );
-          return role === "owner" || role === "admin";
-        })()
+      ? isOwnerAdminRole(event.organizerId, account.accountId)
       : false;
+    // A published canvas is surfaced on the event page only to viewers its
+    // Publication Audience admits right now; link-audience viewers hold
+    // their own unguessable URL and get no shortcut here.
+    const publication = session
+      ? publicationStore.getPublicationForBoardSession(session.boardSessionId)
+      : null;
+    const publicationViewable =
+      publication !== null &&
+      publicationAudienceAdmits(
+        {
+          isOrganizerMember: viewerIsOwnerAdmin,
+          isMember: Boolean(membership),
+        },
+        publication,
+      );
     // Event Moderators enter through the same governance windows as
     // Owner/Admin; the board link below is only a convenience — the board
     // route enforces the same rules server-side.
@@ -287,6 +343,9 @@ function createEventRoutes(dependencies) {
         (session.status === "scheduled" || session.status === "open")
           ? `b/${event.boardName}`
           : undefined,
+      hostedEventPublishedCanvasHref: publicationViewable
+        ? `events/${event.publicId}/canvas`
+        : undefined,
       hostedEventEnterError: state.errorKey
         ? translate(template, ctx, state.errorKey)
         : undefined,
@@ -563,7 +622,7 @@ function createEventRoutes(dependencies) {
    * @param {string} organizerId
    * @param {import("../organizers/store.mjs").StoredEvent} event
    * @param {number} statusCode
-   * @param {{errorKey?: string, noticeKey?: string, accessCodeReveal?: string}} state
+   * @param {{errorKey?: string, noticeKey?: string, accessCodeReveal?: string, publicationShareUrl?: string}} state
    * @returns {Promise<void>}
    */
   async function renderManageEvent(ctx, organizerId, event, statusCode, state) {
@@ -595,6 +654,35 @@ function createEventRoutes(dependencies) {
       reason: record.reason || undefined,
       createdAt: formatTimestamp(record.createdAtMs),
     }));
+    // Published Canvas state: the publication exists only after the Board
+    // Session closed behind its Private Board Archive. The manage page's own
+    // view link admits the signed-in Owner/Admin through the same audience
+    // definition as the read route, so it never shows a link that would 404
+    // (the owner may or may not hold an Event Membership).
+    const session = organizerStore.getBoardSessionForEvent(event.eventId);
+    const publication = session
+      ? publicationStore.getPublicationForBoardSession(session.boardSessionId)
+      : null;
+    const viewerAccount = signedInAccount(ctx);
+    const publicationViewable =
+      publication !== null &&
+      publicationAudienceAdmits(
+        {
+          isOrganizerMember: true,
+          isMember: Boolean(
+            viewerAccount &&
+              membershipStore.getMembership(
+                event.eventId,
+                viewerAccount.accountId,
+              ),
+          ),
+        },
+        publication,
+      );
+    const publicationAudienceKey =
+      publication?.status === "published"
+        ? `hosted_publication_audience_${publication.audience}`
+        : "";
     template.serveWithStatus(ctx.request, ctx.response, statusCode, {
       hostedOrganizerId: organizerId,
       hostedEventId: event.eventId,
@@ -635,6 +723,25 @@ function createEventRoutes(dependencies) {
       hostedEventHasModerators: moderators.length > 0,
       hostedEventModerationRecords: moderationRecords,
       hostedEventHasModerationRecords: moderationRecords.length > 0,
+      // Published Canvas management. The share URL is only ever rendered on
+      // the publish response that minted it; the record stores just a digest.
+      hostedPublicationPublished: publication?.status === "published",
+      hostedPublicationRevoked: publication?.status === "revoked",
+      hostedPublicationAudienceOrganizer: publication?.audience === "organizer",
+      hostedPublicationAudienceMembers: publication?.audience === "members",
+      hostedPublicationAudienceLink: publication?.audience === "link",
+      hostedPublicationAudienceLabel: publicationAudienceKey
+        ? translate(template, ctx, publicationAudienceKey)
+        : "",
+      hostedPublicationAttribution: publication?.showAttribution === true,
+      hostedPublicationPublishedAt: publication?.publishedAtMs
+        ? formatTimestamp(publication.publishedAtMs)
+        : "",
+      hostedPublicationCanPublish: session?.status === "closed",
+      hostedPublicationShareUrl: state.publicationShareUrl,
+      hostedPublicationViewHref: publicationViewable
+        ? `events/${event.publicId}/canvas`
+        : undefined,
       csrfToken: ensureCsrfToken(ctx),
     });
   }
@@ -794,6 +901,342 @@ function createEventRoutes(dependencies) {
         `/organizers/${organizerId}/events/${managed.event.eventId}`,
       ),
     );
+  }
+
+  // --- published canvas -----------------------------------------------------
+
+  /**
+   * The Participant Identifiers whose frozen Presentation Choice allows
+   * showing their attribution on a published canvas: memberships still marked
+   * "identified", projected through the event-scoped identifier derivation.
+   * Creators outside this set — anonymous, banned, or unknown — fail safe to
+   * no identifier on the published artifact.
+   *
+   * @param {string} eventId
+   * @returns {Set<string>}
+   */
+  function identifiedParticipantIdsFor(eventId) {
+    const identifiers = new Set();
+    for (const membership of membershipStore.listMembershipsForEvent(eventId)) {
+      if (membership.anonymity === "identified") {
+        identifiers.add(
+          participantIdentifierFor(eventId, membership.accountId),
+        );
+      }
+    }
+    return identifiers;
+  }
+
+  /**
+   * Reads a Board Session's archived canvas beside its archived manifest and
+   * verifies it against the manifest's integrity hash. The close pipeline
+   * always writes `canvas.svg` next to `manifest.json` and binds the canvas
+   * content in the manifest; a missing object, an unreadable manifest, or a
+   * hash disagreement means the archive cannot be trusted as a publication
+   * source and refuses — publish never derives from unverified bytes.
+   *
+   * @param {import("../organizers/store.mjs").StoredBoardSession} session
+   * @returns {Promise<{canvas: string, itemCount: number} | null>}
+   */
+  async function readArchivedCanvas(session) {
+    if (typeof session.archiveKey !== "string") return null;
+    const manifestBasename = "manifest.json";
+    if (!session.archiveKey.endsWith(`/${manifestBasename}`)) return null;
+    const canvasBytes = await archiveStore.readArchive(
+      `${session.archiveKey.slice(0, -manifestBasename.length)}canvas.svg`,
+    );
+    const manifestBytes = await archiveStore.readArchive(session.archiveKey);
+    if (!canvasBytes || !manifestBytes) return null;
+    let manifest;
+    try {
+      manifest = JSON.parse(manifestBytes.toString("utf8"));
+    } catch {
+      return null;
+    }
+    const expectedSha256 = manifest?.integrity?.["canvas.svg"];
+    const actualSha256 = crypto
+      .createHash("sha256")
+      .update(canvasBytes)
+      .digest("hex");
+    if (
+      typeof expectedSha256 !== "string" ||
+      expectedSha256.length !== actualSha256.length ||
+      !crypto.timingSafeEqual(
+        Buffer.from(expectedSha256, "utf8"),
+        Buffer.from(actualSha256, "utf8"),
+      )
+    ) {
+      return null;
+    }
+    const itemCount =
+      Number.isSafeInteger(manifest?.itemCount) && manifest.itemCount >= 0
+        ? manifest.itemCount
+        : 0;
+    return { canvas: canvasBytes.toString("utf8"), itemCount };
+  }
+
+  /**
+   * Publishes or updates the event's Published Canvas from its Private Board
+   * Archive. Owner/Admin only. The archived canvas is sanitized here — never
+   * exposed directly — with the chosen Publication Audience and attribution
+   * policy, and a `link` audience reveals its fresh share URL exactly once.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOrganizerEventPublication(ctx) {
+    if (ctx.request.method !== "POST") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const organizerId = ctx.params.organizerId || "";
+    const managed = requireManagedEvent(
+      ctx,
+      organizerId,
+      ctx.params.eventId || "",
+    );
+    if (!managed) return;
+    const form = await readFormBody(ctx.request);
+    if (!requestHasValidCsrf(ctx.request, form)) {
+      await renderManageEvent(ctx, organizerId, managed.event, 403, {
+        errorKey: "hosted_error_csrf",
+      });
+      return;
+    }
+    // Publication derives from the sealed Private Board Archive, so the
+    // durable lifecycle must be current first: a session still draining (or
+    // waiting on an archive retry) has nothing to publish yet.
+    await advanceLifecycleNow();
+    const session = organizerStore.getBoardSessionForEvent(
+      managed.event.eventId,
+    );
+    if (!session || session.status !== "closed" || !session.archiveKey) {
+      await renderManageEvent(ctx, organizerId, managed.event, 409, {
+        errorKey: "hosted_publication_error_not_archived",
+      });
+      return;
+    }
+    const audienceValue = form.get("audience") || "";
+    const audience = ["organizer", "members", "link"].includes(audienceValue)
+      ? /** @type {"organizer" | "members" | "link"} */ (audienceValue)
+      : null;
+    if (!audience) {
+      await renderManageEvent(ctx, organizerId, managed.event, 400, {
+        errorKey: "hosted_publication_error_invalid",
+      });
+      return;
+    }
+    const showAttribution = form.get("showAttribution") === "1";
+    const archived = await readArchivedCanvas(session);
+    if (!archived) {
+      // The session record names an archive the object store cannot serve:
+      // an integrity failure on our side must never become a publication.
+      logger.error("hosted.published_archive_unreadable", {
+        organizer_id: organizerId,
+        event_id: managed.event.eventId,
+        board_session: session.boardSessionId,
+      });
+      throw new BoundaryError(500, "published_archive_unavailable");
+    }
+    const existing = publicationStore.getPublicationForBoardSession(
+      session.boardSessionId,
+    );
+    const published = await publicationStore.publish({
+      boardSessionId: session.boardSessionId,
+      eventId: managed.event.eventId,
+      organizerId,
+      audience,
+      showAttribution,
+      canvasContent: derivePublishedCanvas({
+        archiveCanvas: archived.canvas,
+        showAttribution,
+        identifiedParticipantIds: identifiedParticipantIdsFor(
+          managed.event.eventId,
+        ),
+      }),
+      archivedFinalSeq: session.archivedFinalSeq ?? 0,
+      itemCount: archived.itemCount,
+      actorAccountId: managed.account.accountId,
+    });
+    if (!published.ok) {
+      await renderManageEvent(ctx, organizerId, managed.event, 400, {
+        errorKey: "hosted_publication_error_invalid",
+      });
+      return;
+    }
+    logger.info("hosted.published_canvas_published", {
+      organizer_id: organizerId,
+      event_id: managed.event.eventId,
+      audience,
+      attribution: showAttribution,
+      generation: published.publication.generation,
+      updated: existing?.status === "published",
+    });
+    await renderManageEvent(ctx, organizerId, managed.event, 200, {
+      noticeKey:
+        existing?.status === "published"
+          ? "hosted_publication_update_success"
+          : "hosted_publication_publish_success",
+      // The share token is stored only as a digest: the raw value renders
+      // exactly once, on this response.
+      publicationShareUrl: published.shareToken
+        ? publicPath(
+            config,
+            `/events/${managed.event.publicId}/canvas/${published.shareToken}`,
+          )
+        : undefined,
+    });
+  }
+
+  /**
+   * Withdraws the event's Published Canvas. Every audience and share link
+   * stops working immediately because every read consults the live record.
+   * Owner/Admin only.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOrganizerEventPublicationRevoke(ctx) {
+    if (ctx.request.method !== "POST") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const organizerId = ctx.params.organizerId || "";
+    const managed = requireManagedEvent(
+      ctx,
+      organizerId,
+      ctx.params.eventId || "",
+    );
+    if (!managed) return;
+    const form = await readFormBody(ctx.request);
+    if (!requestHasValidCsrf(ctx.request, form)) {
+      await renderManageEvent(ctx, organizerId, managed.event, 403, {
+        errorKey: "hosted_error_csrf",
+      });
+      return;
+    }
+    const session = organizerStore.getBoardSessionForEvent(
+      managed.event.eventId,
+    );
+    const revoked = session
+      ? await publicationStore.revoke({
+          boardSessionId: session.boardSessionId,
+          actorAccountId: managed.account.accountId,
+        })
+      : { ok: false, reason: "not_found" };
+    if (!revoked.ok) {
+      // A stale form (nothing published) is refused without side effects.
+      await renderManageEvent(ctx, organizerId, managed.event, 409, {
+        errorKey: "hosted_publication_error_state",
+      });
+      return;
+    }
+    logger.info("hosted.published_canvas_revoked", {
+      organizer_id: organizerId,
+      event_id: managed.event.eventId,
+    });
+    seeOther(
+      ctx,
+      publicPath(
+        config,
+        `/organizers/${organizerId}/events/${managed.event.eventId}`,
+      ),
+    );
+  }
+
+  /**
+   * Whether the current viewer passes the publication's Publication Audience.
+   * The organizer and members audiences resolve the signed-in viewer through
+   * the shared admission definition; the link audience requires the
+   * unguessable token bound to exactly this publication.
+   *
+   * @param {HttpRouteContext} ctx
+   * @param {import("../organizers/store.mjs").StoredEvent} event
+   * @param {import("../publication/store.mjs").StoredPublication} publication
+   * @returns {boolean}
+   */
+  function viewerPassesPublicationAudience(ctx, event, publication) {
+    if (publication.audience === "link") {
+      const publicationByToken = publicationStore.getPublicationByShareToken(
+        ctx.params.token || "",
+      );
+      return publicationByToken?.boardSessionId === publication.boardSessionId;
+    }
+    const account = signedInAccount(ctx);
+    if (!account) return false;
+    return publicationAudienceAdmits(
+      {
+        isOrganizerMember: isOwnerAdminRole(
+          event.organizerId,
+          account.accountId,
+        ),
+        isMember: Boolean(
+          membershipStore.getMembership(event.eventId, account.accountId),
+        ),
+      },
+      publication,
+    );
+  }
+
+  /**
+   * The public read route of the Published Canvas. Every read re-checks the
+   * publication's current audience against the live record, so a withdrawal,
+   * an audience change, or a rotated share link takes effect immediately.
+   * Every refusal renders the same 404: probing for a canvas, an event, or a
+   * share link reveals nothing.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function servePublishedCanvas(ctx) {
+    if (ctx.request.method !== "GET") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const event = organizerStore.getEventByPublicId(ctx.params.publicId || "");
+    const session = event
+      ? organizerStore.getBoardSessionForEvent(event.eventId)
+      : null;
+    const publication = session
+      ? publicationStore.getPublicationForBoardSession(session.boardSessionId)
+      : null;
+    if (
+      !event ||
+      !session ||
+      !publication ||
+      publication.status !== "published" ||
+      !viewerPassesPublicationAudience(ctx, event, publication)
+    ) {
+      throw new BoundaryError(404, "published_canvas_not_found");
+    }
+    const canvasBytes = await archiveStore.readArchive(publication.canvasKey);
+    if (!canvasBytes) {
+      logger.error("hosted.published_canvas_object_missing", {
+        event_id: event.eventId,
+        board_session: session.boardSessionId,
+      });
+      throw new BoundaryError(404, "published_canvas_not_found");
+    }
+    const canvas = canvasBytes.toString("utf8");
+    // Contributors derive from the derived artifact itself: only identified
+    // participants' identifiers survive sanitization, so an anonymous
+    // participant can never appear here.
+    const contributors = publication.showAttribution
+      ? listPublishedContributorIds(canvas)
+      : [];
+    const template = templates.publishedCanvas;
+    // The canvas is audience-gated and revocable — the hosted shell is
+    // already no-store — and search engines must never index it.
+    ctx.response.setHeader("X-Robots-Tag", "noindex, nofollow");
+    template.serveWithStatus(ctx.request, ctx.response, 200, {
+      hostedCanvasEventName: event.name,
+      hostedCanvasSvg: canvas,
+      hostedCanvasAttribution: publication.showAttribution,
+      hostedCanvasContributors: contributors.map((participantId) => ({
+        participantId,
+      })),
+      hostedCanvasHasContributors: contributors.length > 0,
+      hostedCanvasPublishedAt: publication.publishedAtMs
+        ? formatTimestamp(publication.publishedAtMs)
+        : "",
+    });
   }
 
   /**
@@ -1035,6 +1478,9 @@ function createEventRoutes(dependencies) {
     serveOrganizerEventModerators,
     serveOrganizerEventModeratorRevoke,
     serveOrganizerEventCover,
+    serveOrganizerEventPublication,
+    serveOrganizerEventPublicationRevoke,
+    servePublishedCanvas,
   };
 }
 

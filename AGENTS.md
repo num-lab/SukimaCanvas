@@ -440,6 +440,31 @@ reconnects are refused by admission. Empty Board Sessions archive the same
 way. Failure notifications to organizers and lifecycle notices build on this
 state.
 
+Published Canvas publication lives under
+[hosted_event/publication/](./server/hosted_event/publication/): Owner/Admin
+publish flows (`POST
+/organizers/{organizerId}/events/{eventId}/publication` and
+`.../publication/revoke` in
+[events/routes.mjs](./server/hosted_event/events/routes.mjs)) always derive a
+sanitized, read-only presentation from the sealed Private Board Archive —
+never the authoritative canvas — via
+[publication/canvas.mjs](./server/hosted_event/publication/canvas.mjs), which
+strips every `data-wbo-created-by` attribute that the Publication Policy does
+not allow to show (an item keeps its Participant Identifier only when the
+organizer enabled public attribution and its creator's frozen Presentation
+Choice is "identified"; anonymous, banned, and unknown creators fail safe to
+no identifier). The derived artifact is stored immutably under
+`published-canvases/` in the archive store by
+[publication/store.mjs](./server/hosted_event/publication/store.mjs), keyed by
+a per-board-session monotonic generation; unchanged policy content reuses the
+current generation's object. Publication Audience (`organizer`, `members`,
+`link`) is re-checked on every read of `GET /events/{publicId}/canvas` and
+`GET /events/{publicId}/canvas/{token}` — revocation invalidates all
+audiences and the (digest-stored, revealed-once, rotated on every
+link-audience publish) share token immediately, and every refusal renders one
+uniform 404. The published page is `no-store` with `X-Robots-Tag` and meta
+`robots` noindex.
+
 ### tests, benchmarks, and profiling
 
 Use [test-node](./test-node) for Node tests and

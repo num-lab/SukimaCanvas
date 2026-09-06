@@ -285,6 +285,10 @@ function createServerRuntime(config) {
       config,
       "organizer-event.html",
     ),
+    publishedCanvasTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "published-canvas.html",
+    ),
     htmlHeadSnippet,
   });
   return {

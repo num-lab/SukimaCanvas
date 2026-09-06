@@ -23,6 +23,7 @@ import { createEventModeration } from "./moderation/index.mjs";
 import { createFileModerationStore } from "./moderation/store.mjs";
 import { createOrganizerRoutes } from "./organizers/routes.mjs";
 import { createFileOrganizerStore } from "./organizers/store.mjs";
+import { createFilePublicationStore } from "./publication/store.mjs";
 import { createReservationRoutes } from "./reservations/routes.mjs";
 
 /** @import { HttpRequest, HttpResponse, ServerConfig } from "../../types/server-runtime.d.ts" */
@@ -141,6 +142,7 @@ class HostedPageTemplate extends Template {
  *   operatorChangeTemplatePath: string,
  *   eventTemplatePath: string,
  *   organizerEventTemplatePath: string,
+ *   publishedCanvasTemplatePath: string,
  *   htmlHeadSnippet?: string,
  * }} paths
  * @returns {import("../../types/server-runtime.d.ts").HostedEventModule}
@@ -219,9 +221,15 @@ function createHostedEventModule(config, paths) {
   // Private Board Archive storage: write-once objects under
   // `<HOSTED_DATA_DIR>/board-archives/`, addressed by internal keys that are
   // never public access credentials. The close pipeline below is the only
-  // writer.
+  // writer; the publication store adds derived Published Canvas objects in
+  // its own key namespace.
   const archiveStore = createFileBoardArchiveStore({
     dataDir: config.HOSTED_DATA_DIR,
+  });
+  const publicationStore = createFilePublicationStore({
+    dataDir: config.HOSTED_DATA_DIR,
+    clock,
+    archiveStore,
   });
   const boardArchivePipeline = createBoardArchivePipeline({
     organizerStore,
@@ -424,6 +432,9 @@ function createHostedEventModule(config, paths) {
     membershipStore,
     moderation: eventModeration,
     assetStore,
+    publicationStore,
+    archiveStore,
+    participantIdentifierFor,
     limiter,
     advanceEventLifecycle: refreshEventLifecycle,
     templates: {
@@ -435,6 +446,11 @@ function createHostedEventModule(config, paths) {
       ),
       organizerEvent: new HostedPageTemplate(
         paths.organizerEventTemplatePath,
+        config,
+        templateOptions,
+      ),
+      publishedCanvas: new HostedPageTemplate(
+        paths.publishedCanvasTemplatePath,
         config,
         templateOptions,
       ),
@@ -516,6 +532,10 @@ function createHostedEventModule(config, paths) {
     serveOrganizerEventModeratorRevoke:
       eventRoutes.serveOrganizerEventModeratorRevoke,
     serveOrganizerEventCover: eventRoutes.serveOrganizerEventCover,
+    serveOrganizerEventPublication: eventRoutes.serveOrganizerEventPublication,
+    serveOrganizerEventPublicationRevoke:
+      eventRoutes.serveOrganizerEventPublicationRevoke,
+    servePublishedCanvas: eventRoutes.servePublishedCanvas,
   };
 }
 

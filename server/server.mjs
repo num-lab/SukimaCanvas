@@ -56,6 +56,8 @@ import {
   serveOrganizerEventEntryLock,
   serveOrganizerEventModeratorRevoke,
   serveOrganizerEventModerators,
+  serveOrganizerEventPublication,
+  serveOrganizerEventPublicationRevoke,
   serveOrganizerInvitationAccept,
   serveOrganizerInvitationDecline,
   serveOrganizerInvitationRevoke,
@@ -65,6 +67,7 @@ import {
   serveOrganizerMemberRole,
   serveOrganizerReservation,
   serveOrganizerReservations,
+  servePublishedCanvas,
   serveRegister,
   serveReset,
   serveSubmitChangeRequest,
@@ -275,6 +278,16 @@ function createWhiteboardHttpHandler() {
       "hosted_organizer_event_cover",
     ),
     route(
+      "/organizers/{organizerId}/events/{eventId}/publication",
+      serveOrganizerEventPublication,
+      "hosted_organizer_event_publication",
+    ),
+    route(
+      "/organizers/{organizerId}/events/{eventId}/publication/revoke",
+      serveOrganizerEventPublicationRevoke,
+      "hosted_organizer_event_publication_revoke",
+    ),
+    route(
       "/organizers/{organizerId}/credentials",
       serveOrganizerCredentialCreate,
       "hosted_organizer_credential_create",
@@ -374,6 +387,19 @@ function createWhiteboardHttpHandler() {
       "/events/{publicId}/anonymity",
       serveEventAnonymity,
       "hosted_event_anonymity",
+    ),
+    // The Published Canvas read routes: the bare URL serves the organizer and
+    // members audiences, the token URL carries the link audience's share
+    // token. Both are audience-checked on every read inside the handler.
+    route(
+      "/events/{publicId}/canvas",
+      servePublishedCanvas,
+      "hosted_published_canvas",
+    ),
+    route(
+      "/events/{publicId}/canvas/{token}",
+      servePublishedCanvas,
+      "hosted_published_canvas_link",
     ),
     route("/assets/{assetId}", serveBrandAsset, "hosted_brand_asset"),
     route("/manifest.json", serveManifest, "manifest"),

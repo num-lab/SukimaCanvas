@@ -207,6 +207,21 @@ function createFileEventMembershipStore(options) {
   }
 
   /**
+   * Every membership of one event. The published canvas derivation reads
+   * these to resolve each attributed item creator's frozen Presentation
+   * Choice; identity projection happens above this store.
+   *
+   * @param {string} eventId
+   * @returns {StoredEventMembership[]}
+   */
+  function listMembershipsForEvent(eventId) {
+    ensureLoaded();
+    return [...membershipsByKey.values()].filter(
+      (membership) => membership.eventId === eventId,
+    );
+  }
+
+  /**
    * Admits an account to an event: creates the membership on first admission
    * and restores the existing one afterwards, keeping the original anonymity
    * choice. Idempotent and synchronous in its check-and-create, so duplicate
@@ -359,6 +374,7 @@ function createFileEventMembershipStore(options) {
 
   return {
     getMembership,
+    listMembershipsForEvent,
     admit,
     setAnonymity,
     isEventBanned,

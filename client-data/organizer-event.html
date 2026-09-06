@@ -179,6 +179,61 @@
         <p class="hosted-account-note">{{hostedTranslations.hosted_event_moderation_log_empty}}</p>
         {{/if}}
 
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_publication_title}}</h2>
+        {{#if hostedPublicationShareUrl}}
+        <p class="hosted-form-success" role="status">
+          {{hostedTranslations.hosted_publication_share_reveal}}
+          <code class="hosted-publication-share-url">{{hostedPublicationShareUrl}}</code>
+        </p>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_publication_share_hint}}</p>
+        {{/if}}
+        {{#if hostedPublicationCanPublish}}
+        <p class="hosted-account-note">
+          {{#if hostedPublicationPublished}}
+          {{hostedTranslations.hosted_publication_status_published}} — {{hostedPublicationAudienceLabel}}, {{hostedTranslations.hosted_publication_published_at}} {{hostedPublicationPublishedAt}}
+          {{else if hostedPublicationRevoked}}
+          {{hostedTranslations.hosted_publication_status_revoked}}
+          {{else}}
+          {{hostedTranslations.hosted_publication_status_none}}
+          {{/if}}
+        </p>
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/publication" novalidate>
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-publication-audience">{{hostedTranslations.hosted_publication_audience_label}}</label>
+            <select id="hosted-publication-audience" name="audience">
+              <option value="organizer" {{#if hostedPublicationAudienceOrganizer}}selected{{/if}}>{{hostedTranslations.hosted_publication_audience_organizer}}</option>
+              <option value="members" {{#if hostedPublicationAudienceMembers}}selected{{/if}}>{{hostedTranslations.hosted_publication_audience_members}}</option>
+              <option value="link" {{#if hostedPublicationAudienceLink}}selected{{/if}}>{{hostedTranslations.hosted_publication_audience_link}}</option>
+            </select>
+          </div>
+          <div class="hosted-form-field">
+            <input type="checkbox" id="hosted-publication-attribution" name="showAttribution" value="1" {{#if hostedPublicationAttribution}}checked{{/if}} />
+            <label for="hosted-publication-attribution">{{hostedTranslations.hosted_publication_attribution_label}}</label>
+            <p class="hosted-form-hint">{{hostedTranslations.hosted_publication_attribution_hint}}</p>
+          </div>
+          <button type="submit" class="hosted-submit">
+            {{#if hostedPublicationPublished}}
+            {{hostedTranslations.hosted_publication_update}}
+            {{else}}
+            {{hostedTranslations.hosted_publication_publish}}
+            {{/if}}
+          </button>
+        </form>
+        {{#if hostedPublicationViewHref}}
+        <p class="hosted-account-alt"><a href="{{hostedPublicationViewHref}}">{{hostedTranslations.hosted_publication_view_link}}</a></p>
+        {{/if}}
+        {{#if hostedPublicationPublished}}
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/publication/revoke" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <button type="submit" class="hosted-submit hosted-submit-danger">{{hostedTranslations.hosted_publication_revoke}}</button>
+        </form>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_publication_revoke_hint}}</p>
+        {{/if}}
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_publication_requires_archive_note}}</p>
+        {{/if}}
+
         <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_event_cover_label}}</h2>
         {{#if hostedEventHasCover}}
         <img class="hosted-event-cover-preview" src="{{hostedEventCoverHref}}" alt="{{hostedTranslations.hosted_event_cover_alt}}" />
