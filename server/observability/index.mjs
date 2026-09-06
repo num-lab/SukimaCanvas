@@ -259,6 +259,11 @@ const hostedOutcomePurges = meter.createCounter("wbo.hosted.outcome_purge", {
     'Count of hosted event outcome purge attempts, labeled by "wbo.hosted.outcome_purge.outcome"; error.type carries the deterministic failure code for failed attempts.',
   unit: "{purge}",
 });
+const hostedNotices = meter.createCounter("wbo.hosted.notice", {
+  description:
+    'Count of hosted notice delivery attempts, labeled by "wbo.hosted.notice.outcome" and "wbo.hosted.notice.kind"; a failed attempt is retried with backoff and stays observable.',
+  unit: "{notice}",
+});
 const loadedBoardsGauge = meter.createObservableGauge("wbo.board.loaded", {
   description: "Current number of board instances loaded in server memory.",
   unit: "{board}",
@@ -910,6 +915,23 @@ function recordOutcomePurge(outcome, failureCode) {
 }
 
 /**
+ * Records one hosted notice delivery attempt outcome: the notice was either
+ * handed to the mail vendor ("sent") or the attempt failed and stays queued
+ * for a backed-off retry. The kind attribute separates account mail from the
+ * event lifecycle notices.
+ *
+ * @param {"sent" | "failed"} outcome
+ * @param {string} kind
+ * @returns {void}
+ */
+function recordNoticeDelivery(outcome, kind) {
+  hostedNotices.add(1, {
+    "wbo.hosted.notice.outcome": outcome,
+    "wbo.hosted.notice.kind": String(kind || "unknown"),
+  });
+}
+
+/**
  * @param {string} operation
  * @param {string | undefined} boardName
  * @param {number} durationSeconds
@@ -1015,6 +1037,7 @@ const observabilityMetrics = {
   recordBoardArchiveClose,
   recordBoardExport,
   recordOutcomePurge,
+  recordNoticeDelivery,
   recordBoardMessage,
   changeHttpActiveRequests,
   recordBoardOperationDuration,

@@ -344,6 +344,26 @@ export const HOSTED_OUTCOME_PURGE_RETRY_MS = parseIntegerEnv(
   15 * 60 * 1000,
 );
 
+/**
+ * Base backoff between delivery attempts of a hosted notice whose mail vendor
+ * did not accept it. The delay doubles with each recorded failure up to one
+ * hour, and the notice stays observable on the operator console the whole
+ * time. `0` retries on the next lifecycle pass.
+ */
+export const HOSTED_MAIL_RETRY_MS = parseIntegerEnv(
+  "WBO_HOSTED_MAIL_RETRY_MS",
+  60 * 1000,
+);
+
+/**
+ * How long before a Board Session's start the organizer receives the
+ * upcoming-start notice. `0` disables the notice.
+ */
+export const HOSTED_NOTICE_UPCOMING_WINDOW_MS = parseIntegerEnv(
+  "WBO_HOSTED_NOTICE_UPCOMING_WINDOW_MS",
+  24 * 60 * 60 * 1000,
+);
+
 /** Capacity window buffer added before a reservation's start and after its end. */
 export const HOSTED_CAPACITY_WINDOW_BUFFER_MS = parseIntegerEnv(
   "WBO_HOSTED_CAPACITY_WINDOW_BUFFER_MS",

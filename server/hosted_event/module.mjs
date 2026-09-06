@@ -23,6 +23,8 @@ import { createFileBoardMutationLedger } from "./ledger/store.mjs";
 import { createFileEventMembershipStore } from "./memberships/store.mjs";
 import { createEventModeration } from "./moderation/index.mjs";
 import { createFileModerationStore } from "./moderation/store.mjs";
+import { createFileNotificationStore } from "./notifications/store.mjs";
+import { createNotificationService } from "./notifications/service.mjs";
 import { createOrganizerRoutes } from "./organizers/routes.mjs";
 import { createFileOrganizerStore } from "./organizers/store.mjs";
 import { createOutcomeRetentionPipeline } from "./outcomes.mjs";
@@ -197,6 +199,22 @@ function createHostedEventModule(config, paths) {
       : [],
   );
   const limiter = createRateLimiter({ clock });
+  // Lifecycle and account notices: one durable, idempotent queue drained by
+  // the shared mail adapter. The queue is the notification service's store;
+  // the outbox adapter remains the production delivery path.
+  const notificationStore = createFileNotificationStore({
+    dataDir: config.HOSTED_DATA_DIR,
+    clock,
+  });
+  const notifications = createNotificationService({
+    store: notificationStore,
+    mail: createOutboxMailDelivery(config),
+    accountStore: store,
+    organizerStore,
+    membershipStore,
+    config,
+    clock,
+  });
   // Every hosted page renders the session-aware header, including home and
   // source, so all hosted templates share the account resolver. It also reports
   // operator status so the shared header can offer the operator console link.
@@ -240,6 +258,7 @@ function createHostedEventModule(config, paths) {
     archiveStore,
     config,
     clock,
+    notifications,
   });
   // Board Image Export jobs: durable job records plus rendered PNG results
   // under `<HOSTED_DATA_DIR>/board-exports/`. The download token is derived
@@ -290,6 +309,14 @@ function createHostedEventModule(config, paths) {
     await organizerStore.advanceLifecycle({ now, closeDrainMs });
     await boardArchivePipeline.runDueCloses({ now, closeDrainMs });
     await outcomeRetentionPipeline.runDueOutcomePurges({ now });
+    // Upcoming-start notices enqueue durably inside the pass; delivery runs
+    // detached so a slow or failing mail vendor never holds a request or the
+    // close pipeline. The in-flight coalescing in the drain keeps overlapping
+    // passes from racing, and the durable queue makes every pass equivalent.
+    await notifications.noticeUpcomingSessions({ now });
+    notifications.runDueSends({ now }).catch((error) => {
+      logger.error("hosted.notice_drain_failed", { error });
+    });
     boardExportPipeline.runDueExports({ now }).catch((error) => {
       logger.error("hosted.board_export_pass_failed", { error });
     });
@@ -299,7 +326,7 @@ function createHostedEventModule(config, paths) {
     config,
     clock,
     store,
-    mail: createOutboxMailDelivery(config),
+    notifications,
     captcha: createHostedCaptcha(config),
     limiter,
     templates: {
@@ -348,6 +375,7 @@ function createHostedEventModule(config, paths) {
     integrationStore,
     limiter,
     operatorEmails,
+    notificationStore,
     advanceEventLifecycle: refreshEventLifecycle,
     templates: {
       organizerApply: new HostedPageTemplate(
@@ -385,6 +413,7 @@ function createHostedEventModule(config, paths) {
     organizerStore,
     limiter,
     operatorEmails,
+    notifications,
     advanceEventLifecycle: refreshEventLifecycle,
     templates: {
       organizerReservations: new HostedPageTemplate(
@@ -567,6 +596,9 @@ function createHostedEventModule(config, paths) {
     serveIntegrationApiEntryGrantCreate:
       integrationRoutes.serveIntegrationApiEntryGrantCreate,
     refreshEventLifecycle,
+    // Deterministic drain entry point for isolated tests: production drains
+    // through the lifecycle pass; tests await this after queueing notices.
+    runDueNoticeSends: notifications.runDueSends,
     ...eventAdmission,
     ...eventModeration,
     // Real-time close effects: the socket layer registers how connected

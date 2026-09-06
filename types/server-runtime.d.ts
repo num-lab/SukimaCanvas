@@ -95,6 +95,9 @@ export type HostedEventModule = {
   serveEventEnter: HttpRouteHandler;
   serveEventAnonymity: HttpRouteHandler;
   refreshEventLifecycle: () => Promise<void>;
+  runDueNoticeSends: (input?: {
+    now?: number;
+  }) => Promise<{ sent: number; failed: number }>;
   registerBoardCloseEffects: (effects: {
     notifyBoardClosed: (boardName: string) => Promise<void>;
   }) => void;

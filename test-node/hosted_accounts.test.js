@@ -17,19 +17,26 @@ const {
   formValue,
   cookiePair,
   cookieAttributes,
+  pollOutbox,
+  readOutboxMessages,
 } = require("./helpers/hosted_http.js");
 
 /**
- * Reads the newest verification message from the outbox.
+ * Reads a verification message from the outbox, waiting past any previously
+ * seen link when one is given. Outbox filenames are not order-bearing, so
+ * messages are matched by content, not position.
  * @param {string} outboxDir
+ * @param {string} [previousSearch] query string of an already-consumed link
  * @returns {Promise<{message: any, verifyUrl: URL}>}
  */
-async function readVerificationEmail(outboxDir) {
-  const files = (await fs.readdir(outboxDir)).sort();
-  assert.ok(files.length > 0, "outbox must contain a message");
-  const newest = files[files.length - 1] || "";
-  const message = JSON.parse(
-    await fs.readFile(path.join(outboxDir, newest), "utf8"),
+async function readVerificationEmail(outboxDir, previousSearch) {
+  const message = await pollOutbox(async () =>
+    (await readOutboxMessages(outboxDir)).find(
+      (candidate) =>
+        candidate.body.includes("/verify?token=") &&
+        (previousSearch === undefined ||
+          !candidate.body.includes(previousSearch)),
+    ),
   );
   const urlMatch = /https?:\/\/\S+/.exec(message.body);
   assert.ok(urlMatch, "verification email must contain the verify link");
@@ -181,12 +188,12 @@ test("login failures never reveal whether an email is registered", async () => {
     await register(unverifiedEmail);
 
     // Verify the first account only; the second stays unverified.
-    const files = (await fs.readdir(outboxDir)).sort();
-    assert.equal(files.length, 2);
-    for (const file of files) {
-      const message = JSON.parse(
-        await fs.readFile(path.join(outboxDir, file), "utf8"),
-      );
+    const messages = await pollOutbox(async () => {
+      const current = await readOutboxMessages(outboxDir);
+      return current.length === 2 ? current : null;
+    });
+    assert.equal(messages.length, 2);
+    for (const message of messages) {
       if (message.to === verifiedEmail) {
         const urlMatch = /https?:\/\/\S+/.exec(message.body);
         assert.ok(urlMatch);
@@ -345,7 +352,10 @@ test("duplicate registrations stay deterministic", async () => {
     const second = await register("another fine password");
     assert.equal(second.statusCode, 200);
     assert.match(second.body, /verification link/);
-    const secondMessage = await readVerificationEmail(outboxDir);
+    const secondMessage = await readVerificationEmail(
+      outboxDir,
+      firstMessage.verifyUrl.search,
+    );
     assert.notEqual(
       firstMessage.verifyUrl.search,
       secondMessage.verifyUrl.search,

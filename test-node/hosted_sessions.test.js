@@ -1,7 +1,5 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs/promises");
-const path = require("node:path");
 
 const { closeServer } = require("./test_helpers.js");
 const {
@@ -12,6 +10,8 @@ const {
   cookiePair,
   verifyAccount,
   loginSession,
+  pollOutbox,
+  readOutboxMessages,
 } = require("./helpers/hosted_http.js");
 
 /**
@@ -44,19 +44,18 @@ async function createClockControlledServer(overrides = {}) {
  * @returns {Promise<{message: any, resetUrl: URL}>}
  */
 async function readResetEmail(outboxDir, recipient) {
-  const files = (await fs.readdir(outboxDir)).sort();
-  assert.ok(files.length > 0, "outbox must contain a message");
-  for (let index = files.length - 1; index >= 0; index -= 1) {
-    const message = JSON.parse(
-      await fs.readFile(path.join(outboxDir, files[index] || ""), "utf8"),
-    );
-    if (message.to === recipient && message.body.includes("/reset?token=")) {
-      const match = /https?:\/\/\S+/.exec(message.body);
-      assert.ok(match, "reset email must contain the reset link");
-      return { message, resetUrl: new URL(match[0]) };
-    }
-  }
-  assert.fail(`no reset email for ${recipient}`);
+  const message = await pollOutbox(async () =>
+    (await readOutboxMessages(outboxDir))
+      .reverse()
+      .find(
+        (candidate) =>
+          candidate.to === recipient &&
+          candidate.body.includes("/reset?token="),
+      ),
+  );
+  const match = /https?:\/\/\S+/.exec(message.body);
+  assert.ok(match, "reset email must contain the reset link");
+  return { message, resetUrl: new URL(match[0]) };
 }
 
 /**

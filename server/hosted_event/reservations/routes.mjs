@@ -77,6 +77,7 @@ const CHANGE_KIND_LABEL_KEYS = {
  *   organizerStore: ReturnType<typeof import("../organizers/store.mjs").createFileOrganizerStore>,
  *   limiter: ReturnType<typeof import("../accounts/rate_limits.mjs").createRateLimiter>,
  *   operatorEmails: Set<string>,
+ *   notifications?: import("../notifications/service.mjs").NotificationService,
  *   advanceEventLifecycle?: () => Promise<void>,
  *   templates: {
  *     organizerReservations: HostedTemplate,
@@ -96,6 +97,7 @@ function createReservationRoutes(dependencies) {
     organizerStore,
     limiter,
     operatorEmails,
+    notifications,
     templates,
   } = dependencies;
   const clock = dependencies.clock || (() => Date.now());
@@ -743,6 +745,14 @@ function createReservationRoutes(dependencies) {
         organizer_id: organizerId,
         reservation_id: reservation.reservationId,
       });
+      if (notifications && reservation.eventId) {
+        await notifications.onEventCancelled({
+          eventId: reservation.eventId,
+          organizerId: reservation.organizerId,
+          eventName: reservation.eventName,
+          startsAtMs: reservation.startsAtMs,
+        });
+      }
     } else {
       const result = await organizerStore.cancelReservation({
         reservationId: reservation.reservationId,
@@ -992,6 +1002,18 @@ function createReservationRoutes(dependencies) {
         reservation_id: reservation.reservationId,
         event_id: result.eventId,
       });
+      if (notifications) {
+        const approvedEvent = organizerStore.getEventById(result.eventId);
+        await notifications.onReservationApproved({
+          reservationId: reservation.reservationId,
+          organizerId: reservation.organizerId,
+          eventName: reservation.eventName,
+          startsAtMs: approvedEvent
+            ? approvedEvent.startsAtMs
+            : reservation.startsAtMs,
+          seats: reservation.requestedSeats,
+        });
+      }
     } else {
       const result = await organizerStore.rejectReservation({
         reservationId: reservation.reservationId,
@@ -1011,6 +1033,13 @@ function createReservationRoutes(dependencies) {
         operator_account_id: operator.accountId,
         reservation_id: reservation.reservationId,
       });
+      if (notifications) {
+        await notifications.onReservationRejected({
+          reservationId: reservation.reservationId,
+          organizerId: reservation.organizerId,
+          eventName: reservation.eventName,
+        });
+      }
     }
     seeOther(
       ctx,
@@ -1218,6 +1247,20 @@ function createReservationRoutes(dependencies) {
         operator_account_id: operator.accountId,
         change_request_id: request.changeRequestId,
       });
+      if (notifications) {
+        const changed = organizerStore.getReservationById(
+          request.reservationId,
+        );
+        if (changed) {
+          await notifications.onChangeRequestApplied({
+            changeRequestId: request.changeRequestId,
+            organizerId: changed.organizerId,
+            eventName: changed.eventName,
+            startsAtMs: changed.startsAtMs,
+            seats: changed.requestedSeats,
+          });
+        }
+      }
     } else {
       const result = await organizerStore.rejectChangeRequest({
         changeRequestId: request.changeRequestId,
@@ -1237,6 +1280,16 @@ function createReservationRoutes(dependencies) {
         operator_account_id: operator.accountId,
         change_request_id: request.changeRequestId,
       });
+      if (notifications) {
+        const unchanged = organizerStore.getReservationById(
+          request.reservationId,
+        );
+        await notifications.onChangeRequestRejected({
+          changeRequestId: request.changeRequestId,
+          organizerId: request.organizerId,
+          eventName: unchanged ? unchanged.eventName : "",
+        });
+      }
     }
     seeOther(
       ctx,

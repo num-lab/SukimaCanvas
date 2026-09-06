@@ -1862,6 +1862,41 @@ function createFileOrganizerStore(options) {
   }
 
   /**
+   * Board Sessions whose scheduled start falls inside the notice window
+   * ahead of `now` — the upcoming-start work queue read for lifecycle
+   * notices. Like the close work queue this is a read, not a mutation:
+   * idempotent notice keys, not this list, keep repeats from double-sending.
+   *
+   * @param {{now: number, windowMs: number}} input
+   * @returns {{boardSessionId: string, eventId: string, organizerId: string, startsAtMs: number}[]}
+   */
+  function listBoardSessionsStartingWithin(input) {
+    ensureLoaded();
+    const now = input.now;
+    const windowMs =
+      typeof input.windowMs === "number" && Number.isFinite(input.windowMs)
+        ? Math.max(0, input.windowMs)
+        : 0;
+    /** @type {{boardSessionId: string, eventId: string, organizerId: string, startsAtMs: number}[]} */
+    const due = [];
+    if (windowMs <= 0) return due;
+    for (const session of boardSessionsById.values()) {
+      if (session.status !== "scheduled") continue;
+      if (session.startsAtMs <= now) continue;
+      if (session.startsAtMs - now > windowMs) continue;
+      const event = eventsById.get(session.eventId);
+      if (!event || event.status !== "active") continue;
+      due.push({
+        boardSessionId: session.boardSessionId,
+        eventId: session.eventId,
+        organizerId: session.organizerId,
+        startsAtMs: session.startsAtMs,
+      });
+    }
+    return due;
+  }
+
+  /**
    * Seals a draining or archive-failed Board Session CLOSED after its Private
    * Board Archive succeeded: the terminal transition records the archive's
    * object-storage key and the validated final sequence, and is guarded so
@@ -3188,6 +3223,7 @@ function createFileOrganizerStore(options) {
     getBoardSessionForReservation,
     advanceLifecycle,
     listBoardSessionsDueToClose,
+    listBoardSessionsStartingWithin,
     markBoardSessionClosed,
     recordBoardSessionArchiveFailed,
     retryBoardSessionArchive,
