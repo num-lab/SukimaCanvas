@@ -451,10 +451,12 @@ window.turnstile = {
   }
 
   async readConnectionAccessState(): Promise<ConnectionAccessState> {
+    // Polled like `readWriteStatus`, and equally unable to assume the board app
+    // is present: an absent app reads as disconnected without edit rights.
     return this.page.evaluate(() => ({
-      connected: window.WBOApp.connection.socket?.connected === true,
-      connectionState: window.WBOApp.connection.state,
-      canEdit: window.WBOApp.access.canEdit === true,
+      connected: window.WBOApp?.connection?.socket?.connected === true,
+      connectionState: String(window.WBOApp?.connection?.state ?? ""),
+      canEdit: window.WBOApp?.access?.canEdit === true,
     }));
   }
 
@@ -1075,13 +1077,18 @@ window.turnstile = {
     return this.page.evaluate(() => {
       const indicator = document.getElementById("boardStatusIndicator");
       const notice = document.getElementById("boardStatusNotice");
+      // Every caller polls this read. The board app is not there yet while the
+      // page boots, and its parts go away again when a closed Board Session
+      // navigates the page off the board — a poll must see that as "not ready,
+      // ask again", so no field may throw. `bufferedWrites` reports -1 rather
+      // than 0 when the app is absent, because 0 would read as drained.
+      const app = window.WBOApp;
       return {
-        connected: !!window.WBOApp?.connection?.socket?.connected,
-        bufferedWrites: window.WBOApp.writes.bufferedWrites.length,
-        awaitingBoardSnapshot: !!window.WBOApp.replay.awaitingSnapshot,
-        hasAuthoritativeBoardSnapshot:
-          !!window.WBOApp.replay.hasAuthoritativeSnapshot,
-        connectionState: String(window.WBOApp.connection.state ?? ""),
+        connected: !!app?.connection?.socket?.connected,
+        bufferedWrites: app?.writes?.bufferedWrites?.length ?? -1,
+        awaitingBoardSnapshot: !!app?.replay?.awaitingSnapshot,
+        hasAuthoritativeBoardSnapshot: !!app?.replay?.hasAuthoritativeSnapshot,
+        connectionState: String(app?.connection?.state ?? ""),
         indicatorClass: indicator?.className ?? "",
         noticeText: notice?.textContent ?? "",
       };
