@@ -11,6 +11,7 @@ import {
   composeSessionArchiveFailed,
   composeSessionArchived,
   composeSessionUpcoming,
+  composeWebhookSuspended,
 } from "./notices.mjs";
 
 const { logger, metrics } = observability;
@@ -260,6 +261,22 @@ function createNotificationService(dependencies) {
   function organizerMemberRecipients(organizerId) {
     return resolveActiveRecipients(
       organizerStore.listMembers(organizerId).map((member) => member.accountId),
+    );
+  }
+
+  /**
+   * Owner-only recipients, for notices whose subject matter — like a
+   * suspended webhook's signing configuration — is an Owner concern.
+   *
+   * @param {string} organizerId
+   * @returns {{accountId: string, email: string}[]}
+   */
+  function organizerOwnerRecipients(organizerId) {
+    return resolveActiveRecipients(
+      organizerStore
+        .listRolesForOrganizer(organizerId)
+        .filter((role) => role.role === "owner")
+        .map((role) => role.accountId),
     );
   }
 
@@ -549,6 +566,38 @@ function createNotificationService(dependencies) {
     return store.listRetrying();
   }
 
+  /**
+   * A webhook subscription was suspended after its deliveries kept failing
+   * for the give-up window. Owner-only: the signing configuration is an
+   * Owner concern. The key includes the suspension timestamp, so a resume ->
+   * re-suspend episode notifies again while a double pass does not.
+   *
+   * @param {{
+   *   organizerId: string,
+   *   subscriptionId: string,
+   *   endpointHost: string,
+   *   suspendedAtMs?: number,
+   * }} input
+   * @returns {Promise<void>}
+   */
+  async function onWebhookSubscriptionSuspended(input) {
+    const suspendedAtMs =
+      typeof input.suspendedAtMs === "number"
+        ? input.suspendedAtMs
+        : clock();
+    await fanOut({
+      kind: NOTICE_KINDS.WEBHOOK_SUSPENDED,
+      key: `webhook-suspended:${input.subscriptionId}:${suspendedAtMs}`,
+      audience: "organizer",
+      recipients: organizerOwnerRecipients(input.organizerId),
+      composed: composeWebhookSuspended({
+        endpointHost: input.endpointHost,
+        suspendedAtMs,
+        offsetMinutes,
+      }),
+    });
+  }
+
   return {
     queueAccountMail,
     onReservationApproved,
@@ -559,6 +608,7 @@ function createNotificationService(dependencies) {
     noticeUpcomingSessions,
     onSessionArchived,
     onSessionArchiveFailed,
+    onWebhookSubscriptionSuspended,
     runDueSends,
     listRetrying,
   };

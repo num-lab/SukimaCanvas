@@ -86,6 +86,7 @@ const NOTICE_KIND_LABEL_KEYS = {
   [NOTICE_KINDS.SESSION_ARCHIVED]: "hosted_notice_kind_session_archived",
   [NOTICE_KINDS.SESSION_ARCHIVE_FAILED]:
     "hosted_notice_kind_session_archive_failed",
+  [NOTICE_KINDS.WEBHOOK_SUSPENDED]: "hosted_notice_kind_webhook_suspended",
 };
 
 /**
@@ -104,6 +105,7 @@ const NOTICE_KIND_LABEL_KEYS = {
  *   accountStore: ReturnType<typeof import("../accounts/store.mjs").createFileAccountStore>,
  *   organizerStore: ReturnType<typeof import("./store.mjs").createFileOrganizerStore>,
  *   integrationStore: ReturnType<typeof import("../integrations/store.mjs").createFileIntegrationStore>,
+ *   webhookStore: ReturnType<typeof import("../webhooks/store.mjs").createFileWebhookStore>,
  *   limiter: ReturnType<typeof import("../accounts/rate_limits.mjs").createRateLimiter>,
  *   operatorEmails: Set<string>,
  *   notificationStore?: ReturnType<typeof import("../notifications/store.mjs").createFileNotificationStore>,
@@ -123,6 +125,7 @@ function createOrganizerRoutes(dependencies) {
     accountStore,
     organizerStore,
     integrationStore,
+    webhookStore,
     limiter,
     operatorEmails,
     notificationStore,
@@ -998,7 +1001,7 @@ function createOrganizerRoutes(dependencies) {
    * @param {number} statusCode
    * @param {string} organizerId
    * @param {{account: {accountId: string, email: string}, role: "owner" | "admin"}} membership
-   * @param {{errorKey?: string, credentialReveal?: string, credentialCreated?: boolean}} state
+   * @param {{errorKey?: string, credentialReveal?: string, credentialCreated?: boolean, webhookReveal?: string, webhookCreated?: boolean, noticeKey?: string}} state
    * @returns {void}
    */
   function renderManage(ctx, statusCode, organizerId, membership, state) {
@@ -1075,6 +1078,30 @@ function createOrganizerRoutes(dependencies) {
               : undefined,
           }))
       : [];
+    // Webhook subscriptions are an Owner-only view; the projection never
+    // carries the signing secret — it is revealed exactly once through
+    // `webhookReveal` right after create or rotate.
+    const webhooks = isOwner
+      ? webhookStore.listSubscriptionsForOrganizer(organizerId).map(
+          (subscription) => ({
+            subscriptionId: subscription.subscriptionId,
+            url: subscription.url,
+            isActive: subscription.status === "active",
+            isSuspended: subscription.status === "suspended",
+            isRevoked: subscription.status === "revoked",
+            createdAt: formatTimestamp(language, subscription.createdAtMs),
+            rotatedAt: subscription.rotatedAtMs
+              ? formatTimestamp(language, subscription.rotatedAtMs)
+              : undefined,
+            suspendedAt: subscription.suspendedAtMs
+              ? formatTimestamp(language, subscription.suspendedAtMs)
+              : undefined,
+            revokedAt: subscription.revokedAtMs
+              ? formatTimestamp(language, subscription.revokedAtMs)
+              : undefined,
+          }),
+        )
+      : [];
     template.serveWithStatus(ctx.request, ctx.response, statusCode, {
       hostedOrganizerId: organizerId,
       hostedOrganizerName: organizer.name,
@@ -1087,6 +1114,13 @@ function createOrganizerRoutes(dependencies) {
       hostedOrganizerHasCredentials: credentials.length > 0,
       hostedOrganizerCredentialReveal: state.credentialReveal,
       hostedOrganizerCredentialCreated: state.credentialCreated === true,
+      hostedOrganizerWebhooks: webhooks,
+      hostedOrganizerHasWebhooks: webhooks.length > 0,
+      hostedOrganizerWebhookReveal: state.webhookReveal,
+      hostedOrganizerWebhookCreated: state.webhookCreated === true,
+      hostedOrganizerWebhookResumed: state.noticeKey
+        ? translate(template, ctx, state.noticeKey)
+        : undefined,
       hostedOrganizerAudit: audit,
       hostedOrganizerManageError: state.errorKey
         ? translate(template, ctx, state.errorKey)
@@ -1443,6 +1477,211 @@ function createOrganizerRoutes(dependencies) {
     seeOther(ctx, publicPath(config, `/organizers/${organizerId}`));
   }
 
+  // --- organizer webhook subscriptions (Owner-only) -------------------------
+
+  /**
+   * Creates a Webhook Subscription and reveals its signing secret exactly
+   * once, on this response. Only an Organizer Owner may create one or ever
+   * see a secret.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOrganizerWebhookCreate(ctx) {
+    if (ctx.request.method !== "POST") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const organizerId = ctx.params.organizerId || "";
+    const owner = requireOwner(ctx, organizerId);
+    if (!owner) return;
+    const form = await readFormBody(ctx.request);
+    if (!requestHasValidCsrf(ctx.request, form)) {
+      renderManage(ctx, 403, organizerId, owner, {
+        errorKey: "hosted_error_csrf",
+      });
+      return;
+    }
+    const url = String(form.get("url") || "");
+    const result = await webhookStore.createSubscription({
+      organizerId,
+      url,
+      actorAccountId: owner.account.accountId,
+    });
+    if (!result.ok) {
+      renderManage(ctx, 400, organizerId, owner, {
+        errorKey: "hosted_org_webhook_error_invalid_url",
+      });
+      return;
+    }
+    organizerStore.appendAudit({
+      actorAccountId: owner.account.accountId,
+      actorKind: "account",
+      action: "organizer_webhook.created",
+      subjectType: "organizer_webhook",
+      subjectId: result.subscription.subscriptionId,
+      organizerId,
+    });
+    logger.info("hosted.organizer_webhook_created", {
+      organizer_id: organizerId,
+      subscription_id: result.subscription.subscriptionId,
+    });
+    renderManage(ctx, 200, organizerId, owner, {
+      webhookReveal: result.secret,
+      webhookCreated: true,
+    });
+  }
+
+  /**
+   * Rotates a subscription's signing secret: the previous secret stops
+   * verifying immediately and the new one is revealed exactly once.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOrganizerWebhookRotate(ctx) {
+    if (ctx.request.method !== "POST") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const organizerId = ctx.params.organizerId || "";
+    const owner = requireOwner(ctx, organizerId);
+    if (!owner) return;
+    const form = await readFormBody(ctx.request);
+    if (!requestHasValidCsrf(ctx.request, form)) {
+      renderManage(ctx, 403, organizerId, owner, {
+        errorKey: "hosted_error_csrf",
+      });
+      return;
+    }
+    const result = await webhookStore.rotateSubscriptionSecret({
+      organizerId,
+      subscriptionId: ctx.params.subscriptionId || "",
+    });
+    if (!result.ok) {
+      if (result.reason === "not_found") {
+        throw new BoundaryError(404, "webhook_not_found");
+      }
+      renderManage(ctx, 409, organizerId, owner, {
+        errorKey: "hosted_org_webhook_error_state",
+      });
+      return;
+    }
+    organizerStore.appendAudit({
+      actorAccountId: owner.account.accountId,
+      actorKind: "account",
+      action: "organizer_webhook.rotated",
+      subjectType: "organizer_webhook",
+      subjectId: result.subscription.subscriptionId,
+      organizerId,
+    });
+    logger.info("hosted.organizer_webhook_rotated", {
+      organizer_id: organizerId,
+      subscription_id: result.subscription.subscriptionId,
+    });
+    renderManage(ctx, 200, organizerId, owner, {
+      webhookReveal: result.secret,
+    });
+  }
+
+  /**
+   * Revokes a subscription. Pending queued events for it are dropped with
+   * the Owner's explicit opt-out; delivered history is untouched.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOrganizerWebhookRevoke(ctx) {
+    if (ctx.request.method !== "POST") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const organizerId = ctx.params.organizerId || "";
+    const owner = requireOwner(ctx, organizerId);
+    if (!owner) return;
+    const form = await readFormBody(ctx.request);
+    if (!requestHasValidCsrf(ctx.request, form)) {
+      renderManage(ctx, 403, organizerId, owner, {
+        errorKey: "hosted_error_csrf",
+      });
+      return;
+    }
+    const result = await webhookStore.revokeSubscription({
+      organizerId,
+      subscriptionId: ctx.params.subscriptionId || "",
+    });
+    if (!result.ok) {
+      if (result.reason === "not_found") {
+        throw new BoundaryError(404, "webhook_not_found");
+      }
+      renderManage(ctx, 409, organizerId, owner, {
+        errorKey: "hosted_org_webhook_error_state",
+      });
+      return;
+    }
+    organizerStore.appendAudit({
+      actorAccountId: owner.account.accountId,
+      actorKind: "account",
+      action: "organizer_webhook.revoked",
+      subjectType: "organizer_webhook",
+      subjectId: ctx.params.subscriptionId || "",
+      organizerId,
+    });
+    logger.info("hosted.organizer_webhook_revoked", {
+      organizer_id: organizerId,
+      subscription_id: ctx.params.subscriptionId || "",
+    });
+    renderManage(ctx, 200, organizerId, owner, {});
+  }
+
+  /**
+   * Resumes a suspended subscription: every event record queued before or
+   * during the suspension becomes deliverable again.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOrganizerWebhookResume(ctx) {
+    if (ctx.request.method !== "POST") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const organizerId = ctx.params.organizerId || "";
+    const owner = requireOwner(ctx, organizerId);
+    if (!owner) return;
+    const form = await readFormBody(ctx.request);
+    if (!requestHasValidCsrf(ctx.request, form)) {
+      renderManage(ctx, 403, organizerId, owner, {
+        errorKey: "hosted_error_csrf",
+      });
+      return;
+    }
+    const result = await webhookStore.resumeSubscription({
+      organizerId,
+      subscriptionId: ctx.params.subscriptionId || "",
+    });
+    if (!result.ok) {
+      if (result.reason === "not_found") {
+        throw new BoundaryError(404, "webhook_not_found");
+      }
+      renderManage(ctx, 409, organizerId, owner, {
+        errorKey: "hosted_org_webhook_error_state",
+      });
+      return;
+    }
+    organizerStore.appendAudit({
+      actorAccountId: owner.account.accountId,
+      actorKind: "account",
+      action: "organizer_webhook.resumed",
+      subjectType: "organizer_webhook",
+      subjectId: ctx.params.subscriptionId || "",
+      organizerId,
+    });
+    logger.info("hosted.organizer_webhook_resumed", {
+      organizer_id: organizerId,
+      subscription_id: ctx.params.subscriptionId || "",
+    });
+    renderManage(ctx, 200, organizerId, owner, {
+      noticeKey: "hosted_org_webhook_resumed",
+    });
+  }
+
   return {
     serveOrganizerApply,
     serveOperatorConsole,
@@ -1462,6 +1701,10 @@ function createOrganizerRoutes(dependencies) {
     serveOrganizerCredentialCreate,
     serveOrganizerCredentialRotate,
     serveOrganizerCredentialRevoke,
+    serveOrganizerWebhookCreate,
+    serveOrganizerWebhookRotate,
+    serveOrganizerWebhookRevoke,
+    serveOrganizerWebhookResume,
   };
 }
 

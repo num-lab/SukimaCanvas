@@ -27,6 +27,7 @@ const KINDS = {
   SESSION_UPCOMING: "session_upcoming",
   SESSION_ARCHIVED: "session_archived",
   SESSION_ARCHIVE_FAILED: "session_archive_failed",
+  WEBHOOK_SUSPENDED: "webhook_suspended",
 };
 
 const INTERNAL_ARCHIVE_FAILURE_REASON = {
@@ -403,6 +404,47 @@ the archive step when "${name}" closed did not complete (reason: ${reason.en}). 
   );
 }
 
+/**
+ * Webhook suspension: the Organizer Owner learns that their endpoint kept
+ * failing for 24 hours, that queued event records are safe, and that
+ * resuming after a fix delivers them. The endpoint is identified by its host
+ * only — never the full URL with any private path — and no signing material
+ * is included.
+ *
+ * @param {{
+ *   endpointHost: string,
+ *   suspendedAtMs: number,
+ *   offsetMinutes: number,
+ * }} input
+ * @returns {ComposedNotice}
+ */
+function composeWebhookSuspended(input) {
+  const host = input.endpointHost || "your webhook endpoint";
+  const suspendedAt = formatServiceTime(input.suspendedAtMs, input.offsetMinutes);
+  return assemble(
+    {
+      subject: `Webhook 订阅已暂停（${host}）`,
+      body: `你好，
+
+你们指向 ${host} 的 Webhook 订阅因连续 24 小时投递失败已被暂停。暂停期间产生的事件记录都已安全保存；修复接收端后，在 Organizer 控制台恢复订阅，这些记录会立即投递。
+
+暂停时间：${suspendedAt}
+
+—— SukimaCanvas`,
+    },
+    {
+      subject: `Webhook subscription suspended (${host})`,
+      body: `Hello,
+
+your webhook subscription pointing at ${host} was suspended after 24 hours of failed deliveries. Every event record queued during the suspension is safely stored; once the endpoint is fixed, resuming the subscription from the Organizer console delivers them.
+
+Suspended at: ${suspendedAt}
+
+—— SukimaCanvas`,
+    },
+  );
+}
+
 export {
   KINDS as NOTICE_KINDS,
   composeChangeRequestApplied,
@@ -413,4 +455,5 @@ export {
   composeSessionArchiveFailed,
   composeSessionArchived,
   composeSessionUpcoming,
+  composeWebhookSuspended,
 };

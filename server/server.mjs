@@ -55,6 +55,10 @@ import {
   serveOrganizerEvent,
   serveOrganizerEventAccessCode,
   serveOrganizerEventAudit,
+  serveOrganizerWebhookCreate,
+  serveOrganizerWebhookResume,
+  serveOrganizerWebhookRevoke,
+  serveOrganizerWebhookRotate,
   serveOrganizerEventCover,
   serveOrganizerEventEntryLock,
   serveOrganizerEventExportDelete,
@@ -346,6 +350,26 @@ function createWhiteboardHttpHandler() {
       "/organizers/{organizerId}/credentials/{credentialId}/revoke",
       serveOrganizerCredentialRevoke,
       "hosted_organizer_credential_revoke",
+    ),
+    route(
+      "/organizers/{organizerId}/webhooks",
+      serveOrganizerWebhookCreate,
+      "hosted_organizer_webhook_create",
+    ),
+    route(
+      "/organizers/{organizerId}/webhooks/{subscriptionId}/rotate",
+      serveOrganizerWebhookRotate,
+      "hosted_organizer_webhook_rotate",
+    ),
+    route(
+      "/organizers/{organizerId}/webhooks/{subscriptionId}/revoke",
+      serveOrganizerWebhookRevoke,
+      "hosted_organizer_webhook_revoke",
+    ),
+    route(
+      "/organizers/{organizerId}/webhooks/{subscriptionId}/resume",
+      serveOrganizerWebhookResume,
+      "hosted_organizer_webhook_resume",
     ),
     // The versioned integration API for organizer backends: credential-
     // authenticated, organizer-scoped. Browser Entry Grant redemption sits

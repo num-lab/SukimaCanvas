@@ -7,7 +7,7 @@ import { serveError } from "../http/observation.mjs";
  * concept, so each route rejects with a deterministic 404 instead of falling
  * through to static file resolution.
  *
- * @param {keyof Pick<HostedEventModule, "serveRegister" | "serveLogin" | "serveVerify" | "serveLogout" | "serveForgot" | "serveReset" | "serveAccount" | "serveAccountPassword" | "serveAccountDelete" | "serveAccountSessionRevoke" | "serveAccountSessionsRevokeOthers" | "serveOrganizerApply" | "serveOperatorConsole" | "serveOperatorArchiveRetry" | "serveOperatorOutcomePurgeRetry" | "serveOperatorApplication" | "serveOperatorApproveApplication" | "serveOperatorRejectApplication" | "serveOrganizerConsole" | "serveOrganizerInvitationAccept" | "serveOrganizerInvitationDecline" | "serveOrganizerManage" | "serveOrganizerInvite" | "serveOrganizerInvitationRevoke" | "serveOrganizerMemberRole" | "serveOrganizerMemberRemove" | "serveOrganizerReservations" | "serveOrganizerReservation" | "serveSubmitReservation" | "serveCancelReservation" | "serveSubmitChangeRequest" | "serveOperatorReservations" | "serveOperatorReservation" | "serveOperatorApproveReservation" | "serveOperatorRejectReservation" | "serveOperatorChanges" | "serveOperatorChange" | "serveOperatorApproveChange" | "serveOperatorRejectChange" | "serveEventPage" | "serveEventEnter" | "serveEventAnonymity" | "serveBrandAsset" | "serveOrganizerEvent" | "serveOrganizerEventAccessCode" | "serveOrganizerEventEntryLock" | "serveOrganizerEventModerators" | "serveOrganizerEventModeratorRevoke" | "serveOrganizerEventCover" | "serveOrganizerEventPublication" | "serveOrganizerEventPublicationRevoke" | "serveOrganizerEventOutcomeDelete" | "serveOrganizerEventOutcomeRestore" | "serveOrganizerEventAudit" | "servePublishedCanvas" | "serveOrganizerEventExports" | "serveOrganizerEventExportDownload" | "serveOrganizerEventExportRevoke" | "serveOrganizerEventExportDelete" | "serveOrganizerCredentialCreate" | "serveOrganizerCredentialRotate" | "serveOrganizerCredentialRevoke" | "serveEventEntryGrantRedeem" | "serveIntegrationApiEvent" | "serveIntegrationApiEntryGrantCreate">} handlerName
+ * @param {keyof Pick<HostedEventModule, "serveRegister" | "serveLogin" | "serveVerify" | "serveLogout" | "serveForgot" | "serveReset" | "serveAccount" | "serveAccountPassword" | "serveAccountDelete" | "serveAccountSessionRevoke" | "serveAccountSessionsRevokeOthers" | "serveOrganizerApply" | "serveOperatorConsole" | "serveOperatorArchiveRetry" | "serveOperatorOutcomePurgeRetry" | "serveOperatorApplication" | "serveOperatorApproveApplication" | "serveOperatorRejectApplication" | "serveOrganizerConsole" | "serveOrganizerInvitationAccept" | "serveOrganizerInvitationDecline" | "serveOrganizerManage" | "serveOrganizerInvite" | "serveOrganizerInvitationRevoke" | "serveOrganizerMemberRole" | "serveOrganizerMemberRemove" | "serveOrganizerReservations" | "serveOrganizerReservation" | "serveSubmitReservation" | "serveCancelReservation" | "serveSubmitChangeRequest" | "serveOperatorReservations" | "serveOperatorReservation" | "serveOperatorApproveReservation" | "serveOperatorRejectReservation" | "serveOperatorChanges" | "serveOperatorChange" | "serveOperatorApproveChange" | "serveOperatorRejectChange" | "serveEventPage" | "serveEventEnter" | "serveEventAnonymity" | "serveBrandAsset" | "serveOrganizerEvent" | "serveOrganizerEventAccessCode" | "serveOrganizerEventEntryLock" | "serveOrganizerEventModerators" | "serveOrganizerEventModeratorRevoke" | "serveOrganizerEventCover" | "serveOrganizerEventPublication" | "serveOrganizerEventPublicationRevoke" | "serveOrganizerEventOutcomeDelete" | "serveOrganizerEventOutcomeRestore" | "serveOrganizerEventAudit" | "servePublishedCanvas" | "serveOrganizerEventExports" | "serveOrganizerEventExportDownload" | "serveOrganizerEventExportRevoke" | "serveOrganizerEventExportDelete" | "serveOrganizerCredentialCreate" | "serveOrganizerCredentialRotate" | "serveOrganizerCredentialRevoke" | "serveOrganizerWebhookCreate" | "serveOrganizerWebhookRotate" | "serveOrganizerWebhookRevoke" | "serveOrganizerWebhookResume" | "serveEventEntryGrantRedeem" | "serveIntegrationApiEvent" | "serveIntegrationApiEntryGrantCreate">} handlerName
  * @returns {import("../../types/server-runtime.d.ts").HttpRouteHandler}
  */
 function serveHostedAccountPage(handlerName) {
@@ -189,6 +189,18 @@ export const serveOrganizerCredentialRotate = serveHostedAccountPage(
 );
 export const serveOrganizerCredentialRevoke = serveHostedAccountPage(
   "serveOrganizerCredentialRevoke",
+);
+export const serveOrganizerWebhookCreate = serveHostedAccountPage(
+  "serveOrganizerWebhookCreate",
+);
+export const serveOrganizerWebhookRotate = serveHostedAccountPage(
+  "serveOrganizerWebhookRotate",
+);
+export const serveOrganizerWebhookRevoke = serveHostedAccountPage(
+  "serveOrganizerWebhookRevoke",
+);
+export const serveOrganizerWebhookResume = serveHostedAccountPage(
+  "serveOrganizerWebhookResume",
 );
 export const serveEventEntryGrantRedeem = serveHostedAccountPage(
   "serveEventEntryGrantRedeem",

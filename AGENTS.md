@@ -551,6 +551,37 @@ with internal Account ids projected to Participant Identifiers, and the
 event-scoped administrative activity; Event Moderators and Participants have
 no console access at all.
 
+Signed Webhooks live under
+[hosted_event/webhooks/](./server/hosted_event/webhooks/): an Organizer Owner
+creates, rotates, revokes, and resumes Webhook Subscriptions from the
+organizer console (`POST /organizers/{organizerId}/webhooks`,
+`.../webhooks/{subscriptionId}/rotate|revoke|resume`) — non-Owners never see
+or replace the HMAC secret, which is revealed exactly once and stored raw
+only because the platform itself signs with it. Endpoints must be HTTPS
+(HTTP only where the composition allows development), credential-free, and
+hosted; invalid URLs are refused at creation. The durable outbox derives
+`event.opened`, `event.closed`, `archive.ready`, and `archive.failed`
+idempotently from the durable Board Session state (dedupe keys per session
+and failure episode, so restarts and repeated passes enqueue nothing new),
+captures the subscriptions active at derivation time, and delivers each
+payload — Event Public ID, event name, timestamps, and a deterministic
+failure code for `archive.failed`, nothing else — at least once per
+subscription with `X-SukimaCanvas-Signature: t=<unix-seconds>,v1=<hmac-sha256
+over "<t>.<body>">` plus stable event id, event type, and delivery id
+headers. Non-2xx responses, network errors, and timeouts retry with capped
+exponential backoff (`WBO_HOSTED_WEBHOOK_RETRY_MS`) for
+`WBO_HOSTED_WEBHOOK_GIVE_UP_MS` (24 h) per record, measured from its first
+failed attempt; after that the subscription is suspended — its queued
+records freeze, never drop — the Organizer Owners are notified through the
+durable notice queue, and an Owner resumes from the console to deliver them.
+Resuming starts a fresh give-up window for every frozen record, so a fixed
+endpoint can always recover. Fully delivered outbox entries shrink to
+idempotency tombstones after 30 days; their dedupe keys survive, so a
+delivered event can never re-enqueue. Delivery runs detached on the lifecycle-poker
+cadence, discards response bodies unread, treats every failure as data, and
+never logs secrets, signatures, or endpoint URLs. Revocation drops a
+subscription's pending records with the Owner's explicit opt-out.
+
 Account deregistration is owned by
 [hosted_event/accounts/store.mjs](./server/hosted_event/accounts/store.mjs):
 `deleteAccount` irreversibly pseudonymizes the account (the email is replaced

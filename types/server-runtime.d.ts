@@ -133,6 +133,10 @@ export type HostedEventModule = {
   serveOrganizerCredentialCreate: HttpRouteHandler;
   serveOrganizerCredentialRotate: HttpRouteHandler;
   serveOrganizerCredentialRevoke: HttpRouteHandler;
+  serveOrganizerWebhookCreate: HttpRouteHandler;
+  serveOrganizerWebhookRotate: HttpRouteHandler;
+  serveOrganizerWebhookRevoke: HttpRouteHandler;
+  serveOrganizerWebhookResume: HttpRouteHandler;
   serveEventEntryGrantRedeem: HttpRouteHandler;
   serveIntegrationApiEvent: HttpRouteHandler;
   serveIntegrationApiEntryGrantCreate: HttpRouteHandler;

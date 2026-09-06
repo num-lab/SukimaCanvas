@@ -254,6 +254,14 @@ const hostedBoardExports = meter.createCounter("wbo.hosted.board_export", {
     'Count of Board Image Export job attempts, labeled by "wbo.hosted.board_export.outcome"; error.type carries the deterministic failure code for failed attempts.',
   unit: "{export}",
 });
+const hostedWebhookDeliveries = meter.createCounter(
+  "wbo.hosted.webhook_delivery",
+  {
+    description:
+      'Count of signed webhook delivery attempts, labeled by "wbo.hosted.webhook_delivery.outcome"; error.type carries the deterministic failure kind for failed attempts.',
+    unit: "{delivery}",
+  },
+);
 const hostedOutcomePurges = meter.createCounter("wbo.hosted.outcome_purge", {
   description:
     'Count of hosted event outcome purge attempts, labeled by "wbo.hosted.outcome_purge.outcome"; error.type carries the deterministic failure code for failed attempts.',
@@ -896,6 +904,24 @@ function recordBoardExport(outcome, failureCode) {
 }
 
 /**
+ * Records one signed webhook delivery attempt outcome: the event either
+ * reached the receiver ("delivered") or the attempt failed with a
+ * deterministic failure kind while staying queued for a backed-off retry.
+ *
+ * @param {"delivered" | "failed"} outcome
+ * @param {string} [failureKind] deterministic failure kind for failed attempts
+ * @returns {void}
+ */
+function recordWebhookDelivery(outcome, failureKind) {
+  /** @type {{[key: string]: string}} */
+  const attributes = { "wbo.hosted.webhook_delivery.outcome": outcome };
+  if (outcome === "failed" && typeof failureKind === "string" && failureKind) {
+    attributes[ATTR_ERROR_TYPE] = failureKind;
+  }
+  hostedWebhookDeliveries.add(1, attributes);
+}
+
+/**
  * Records one hosted event outcome purge attempt outcome: the event's Private
  * Board Archive, Item Attribution, Change Audit, and associated exports were
  * either purged ("purged") or the attempt failed with a deterministic failure
@@ -1036,6 +1062,7 @@ const logger = {
 const observabilityMetrics = {
   recordBoardArchiveClose,
   recordBoardExport,
+  recordWebhookDelivery,
   recordOutcomePurge,
   recordNoticeDelivery,
   recordBoardMessage,

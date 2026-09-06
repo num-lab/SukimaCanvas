@@ -345,6 +345,26 @@ export const HOSTED_OUTCOME_PURGE_RETRY_MS = parseIntegerEnv(
 );
 
 /**
+ * Base backoff between delivery attempts of a signed webhook whose receiver
+ * returned a non-success response, or whose request failed or timed out. The
+ * delay doubles with each recorded failure up to one hour.
+ */
+export const HOSTED_WEBHOOK_RETRY_MS = parseIntegerEnv(
+  "WBO_HOSTED_WEBHOOK_RETRY_MS",
+  60 * 1000,
+);
+
+/**
+ * How long a subscription's deliveries may keep failing before the
+ * subscription is suspended and its Organizer Owners are notified. Queued
+ * event records are frozen, not dropped: resuming delivers them.
+ */
+export const HOSTED_WEBHOOK_GIVE_UP_MS = parseIntegerEnv(
+  "WBO_HOSTED_WEBHOOK_GIVE_UP_MS",
+  24 * 60 * 60 * 1000,
+);
+
+/**
  * Base backoff between delivery attempts of a hosted notice whose mail vendor
  * did not accept it. The delay doubles with each recorded failure up to one
  * hour, and the notice stays observable on the operator console the whole

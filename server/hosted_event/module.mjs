@@ -26,6 +26,8 @@ import { createFileModerationStore } from "./moderation/store.mjs";
 import { createFileNotificationStore } from "./notifications/store.mjs";
 import { createNotificationService } from "./notifications/service.mjs";
 import { createOrganizerRoutes } from "./organizers/routes.mjs";
+import { createFileWebhookStore } from "./webhooks/store.mjs";
+import { createWebhookPipeline } from "./webhooks/pipeline.mjs";
 import { createFileOrganizerStore } from "./organizers/store.mjs";
 import { createOutcomeRetentionPipeline } from "./outcomes.mjs";
 import { createFilePublicationStore } from "./publication/store.mjs";
@@ -215,6 +217,21 @@ function createHostedEventModule(config, paths) {
     config,
     clock,
   });
+  // Signed webhooks: one durable outbox of lifecycle events per organizer,
+  // derived idempotently from the durable Board Session state and delivered
+  // at least once to every active subscription with HMAC signatures.
+  const webhookStore = createFileWebhookStore({
+    dataDir: config.HOSTED_DATA_DIR,
+    clock,
+    allowInsecureHttp: config.IS_DEVELOPMENT === true,
+  });
+  const webhookPipeline = createWebhookPipeline({
+    webhookStore,
+    organizerStore,
+    notificationService: notifications,
+    config,
+    clock,
+  });
   // Every hosted page renders the session-aware header, including home and
   // source, so all hosted templates share the account resolver. It also reports
   // operator status so the shared header can offer the operator console link.
@@ -309,6 +326,12 @@ function createHostedEventModule(config, paths) {
     await organizerStore.advanceLifecycle({ now, closeDrainMs });
     await boardArchivePipeline.runDueCloses({ now, closeDrainMs });
     await outcomeRetentionPipeline.runDueOutcomePurges({ now });
+    await webhookPipeline.deriveLifecycleEvents();
+    // Signed-webhook delivery talks to organizer endpoints over the network:
+    // it runs detached exactly like the export renders and notice drains.
+    webhookPipeline.runDueDeliveries({ now }).catch((error) => {
+      logger.error("hosted.webhook_delivery_pass_failed", { error });
+    });
     // Upcoming-start notices enqueue durably inside the pass; delivery runs
     // detached so a slow or failing mail vendor never holds a request or the
     // close pipeline. The in-flight coalescing in the drain keeps overlapping
@@ -373,6 +396,7 @@ function createHostedEventModule(config, paths) {
     accountStore: store,
     organizerStore,
     integrationStore,
+    webhookStore,
     limiter,
     operatorEmails,
     notificationStore,

@@ -2992,6 +2992,20 @@ function createFileOrganizerStore(options) {
   }
 
   /**
+   * Every Board Session, oldest first. The webhook pipeline derives its
+   * lifecycle events from this durable state, so a full read-only scan is
+   * the derivation surface; per-kind dedupe keys make repeated scans no-ops.
+   *
+   * @returns {StoredBoardSession[]}
+   */
+  function listBoardSessions() {
+    ensureLoaded();
+    return [...boardSessionsById.values()].sort(
+      (left, right) => left.createdAtMs - right.createdAtMs,
+    );
+  }
+
+  /**
    * The Platform Operator console's archive-failure work list: every Board
    * Session currently waiting in `archive_failed`, oldest failure first, with
    * the failure context and the identifiers the console needs to join event
@@ -3228,6 +3242,7 @@ function createFileOrganizerStore(options) {
     recordBoardSessionArchiveFailed,
     retryBoardSessionArchive,
     listArchiveFailedBoardSessions,
+    listBoardSessions,
     getBoardSessionById,
     submitChangeRequest,
     approveChangeRequest,
