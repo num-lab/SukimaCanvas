@@ -4,6 +4,7 @@ import observability from "../../observability/index.mjs";
 import { resolveRequestClientIpSafe } from "../../socket/policy.mjs";
 import { resolveSignedInAccountFromRequest } from "../accounts/routes.mjs";
 import { createFormSecurity, readFormBody } from "../http_forms.mjs";
+import { createStoreLifecycleAdvancer } from "../lifecycle.mjs";
 import { eventLifecycleState } from "../organizers/store.mjs";
 import { normalizeExternalReference } from "./credentials.mjs";
 
@@ -156,17 +157,10 @@ function createIntegrationRoutes(dependencies) {
    * pipeline, so the API reports and admission decide on the authoritative
    * status. The composed module injects the full refresh (including closes);
    * the standalone default only advances the lifecycle.
-   *
-   * @returns {Promise<void>}
    */
   const advanceLifecycleNow =
     dependencies.advanceEventLifecycle ||
-    (async () => {
-      await organizerStore.advanceLifecycle({
-        now: clock(),
-        closeDrainMs: config.HOSTED_BOARD_SESSION_CLOSE_DRAIN_MS,
-      });
-    });
+    createStoreLifecycleAdvancer({ organizerStore, clock, config });
 
   // --- organizer backend API ------------------------------------------------
 

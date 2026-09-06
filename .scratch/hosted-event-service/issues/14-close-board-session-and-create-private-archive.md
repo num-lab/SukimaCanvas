@@ -77,20 +77,34 @@
   `runDueCloses` into `refreshEventLifecycle` (admission, every console/API
   read, and the durable lifecycle poker all run it — failures never fail the
   surrounding request). Route modules receive the composed refresh via an
-  injected `advanceEventLifecycle` with their previous behavior as the
-  standalone default. The socket layer registers the real-time close effect
-  through `registerBoardCloseEffects` at IO start (test seam mirrors it).
+  injected `advanceEventLifecycle`, with the shared store-only fallback in
+  [lifecycle.mjs](../../../server/hosted_event/lifecycle.mjs). The socket
+  layer registers the real-time close effect through
+  `registerBoardCloseEffects` at IO start (test seam mirrors it).
 - Tests: new `test-node/hosted_board_archive.test.js` (close race with a
   write during closing; seal barrier completing an in-admission mutation and
   refusing/refunding later ones; empty-canvas archive; corrupted-ledger
   validation failure staying `closing` with no archive, then sealing on
-  retry; archive immutability and unsafe-key refusal),
+  retry; a crash between the archive write and the seal retried over the
+  identical archive; archive immutability and unsafe-key refusal),
   `test-node/hosted_lifecycle_store.test.js` updated to the new contract
   (time never seals; guarded sealing; failure audit; restart catch-up stops
   at `closing` until sealed), the shared fixture composes the pipeline like
   production, and
   `playwright/tests/hosted-board-close.spec.ts` covers the full
   browser flow ending on the read-only completion UI and event-page refusal.
+- Code review fixes: (1) the board load/instance cache is shared once in
+  [board/board_loader.mjs](../../../server/board/board_loader.mjs) — the
+  socket layer and the close pipeline install their own stale-save policies
+  on top instead of duplicating the cache; (2) the archive manifest carries
+  no wall-clock fields, so a close that crashed between the archive writes
+  and the seal retries over byte-identical objects and actually seals
+  (previously the fresh timestamp defeated the store's immutable put and
+  wedged the session); (3) the socket completion notification moved out of
+  the close failure path with its own error log, so a notification failure
+  can no longer be recorded as an archive failure; (4) small deduplications
+  from review (closed-status view built once, shared lifecycle fallback,
+  dead fields dropped).
 - Deferred by design to ticket 15 (archive failure recovery): persistent
   `ARCHIVE_FAILED` state modeling beyond the audit record, operator/organizer
   notifications, and idempotent-retry UX. The pipeline already retries every

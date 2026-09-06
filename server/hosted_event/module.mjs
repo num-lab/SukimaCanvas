@@ -506,7 +506,6 @@ function createHostedEventModule(config, paths) {
     // sockets reach their read-only completion state when a Board Session is
     // sealed. Compositions without sockets simply keep the no-op default.
     registerBoardCloseEffects: boardArchivePipeline.registerCloseEffects,
-    runBoardSessionCloses: boardArchivePipeline.runDueCloses,
     serveEventAnonymity: eventRoutes.serveEventAnonymity,
     serveBrandAsset: eventRoutes.serveBrandAsset,
     serveOrganizerEvent: eventRoutes.serveOrganizerEvent,

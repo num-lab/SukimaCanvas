@@ -8,6 +8,7 @@ import {
   seeOther,
   translate,
 } from "../http_forms.mjs";
+import { createStoreLifecycleAdvancer } from "../lifecycle.mjs";
 import {
   formatServiceTime,
   parseDateTimeLocal,
@@ -99,7 +100,6 @@ function createReservationRoutes(dependencies) {
   const clock = dependencies.clock || (() => Date.now());
   const { ensureCsrfToken, requestHasValidCsrf } = createFormSecurity(config);
   const offsetMinutes = config.HOSTED_SERVICE_UTC_OFFSET_MINUTES;
-  const closeDrainMs = config.HOSTED_BOARD_SESSION_CLOSE_DRAIN_MS;
 
   const capacityOptions = () => ({
     bufferMs: config.HOSTED_CAPACITY_WINDOW_BUFFER_MS,
@@ -113,14 +113,10 @@ function createReservationRoutes(dependencies) {
    * authoritative status at the current service clock. Idempotent, so calling
    * it on every read is safe. The composed module injects the full refresh
    * (including closes); the standalone default only advances the lifecycle.
-   *
-   * @returns {Promise<void>}
    */
   const advanceLifecycleNow =
     dependencies.advanceEventLifecycle ||
-    (async () => {
-      await organizerStore.advanceLifecycle({ now: clock(), closeDrainMs });
-    });
+    createStoreLifecycleAdvancer({ organizerStore, clock, config });
 
   /**
    * @param {HttpRouteContext} ctx

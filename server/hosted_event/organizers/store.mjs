@@ -1750,7 +1750,7 @@ function createFileOrganizerStore(options) {
    * status transitions.
    *
    * @param {{now: number, closeDrainMs?: number}} input
-   * @returns {{boardSessionId: string, eventId: string, organizerId: string, boardName: string, endsAtMs: number}[]}
+   * @returns {{boardSessionId: string, eventId: string, organizerId: string, boardName: string}[]}
    */
   function listBoardSessionsDueToClose(input) {
     ensureLoaded();
@@ -1760,7 +1760,7 @@ function createFileOrganizerStore(options) {
       Number.isFinite(input.closeDrainMs)
         ? Math.max(0, input.closeDrainMs)
         : 0;
-    /** @type {{boardSessionId: string, eventId: string, organizerId: string, boardName: string, endsAtMs: number}[]} */
+    /** @type {{boardSessionId: string, eventId: string, organizerId: string, boardName: string}[]} */
     const due = [];
     for (const session of boardSessionsById.values()) {
       if (session.status !== "closing" || session.archiveKey !== null) continue;
@@ -1772,7 +1772,6 @@ function createFileOrganizerStore(options) {
         eventId: session.eventId,
         organizerId: session.organizerId,
         boardName: event.boardName,
-        endsAtMs: session.endsAtMs,
       });
     }
     return due;

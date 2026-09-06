@@ -1,11 +1,7 @@
 import crypto from "node:crypto";
 import fsp from "node:fs/promises";
-import { BoardData } from "../../board/data.mjs";
-import {
-  deleteLoadedBoard,
-  getLoadedBoard,
-  setLoadedBoard,
-} from "../../board/registry.mjs";
+import { loadOrGetLoadedBoard } from "../../board/board_loader.mjs";
+import { deleteLoadedBoard, getLoadedBoard } from "../../board/registry.mjs";
 import { getBoardSession } from "../../board/session.mjs";
 import observability from "../../observability/index.mjs";
 import { readStoredSvgSeq } from "../../persistence/svg_board_store.mjs";
@@ -54,40 +50,33 @@ const ARCHIVE_CANVAS_OBJECT = "canvas.svg";
 const ARCHIVE_MANIFEST_OBJECT = "manifest.json";
 
 /**
- * Loads or returns the process-cached board instance, mirroring the socket
- * layer's instance cache so the pipeline and live connections always observe
- * the same board. A load replays ledger entries past the stored snapshot and
- * fails loudly on ledger gaps or corruption — the first validation gate of
- * every close.
+ * Loads or returns the process-cached board instance through the shared board
+ * loader, so the pipeline and live connections always observe the same board.
+ * A load replays ledger entries past the stored snapshot and fails loudly on
+ * ledger gaps or corruption — the first validation gate of every close.
  *
  * @param {string} boardName
  * @param {BoardArchivePipelineDependencies} dependencies
  * @returns {Promise<import("../../board/data.mjs").BoardData>}
  */
-async function getOrLoadBoard(boardName, dependencies) {
-  const cached = getLoadedBoard(boardName);
-  if (cached) return cached;
-  const loaded = BoardData.load(boardName, dependencies.config).then(
-    (board) => {
-      // A stale save cannot recover by itself: drop the instance so the next
-      // load rebuilds from snapshot plus ledger. No live socket is attached
-      // here — the socket layer owns its own instance-drop effects.
-      board.onStaleSave = async () => {
-        const current = await getLoadedBoard(boardName);
-        if (current !== board) return;
-        deleteLoadedBoard(boardName);
-        board.dispose();
-        logger.warn("board.stale_instance_dropped", {
-          board: boardName,
-          reason: "save_seq_mismatch",
-          source: "board_archive_close",
-        });
-      };
-      return board;
+function getOrLoadBoard(boardName, dependencies) {
+  return loadOrGetLoadedBoard(boardName, dependencies.config, {
+    // A stale save cannot recover by itself: drop the instance so the next
+    // load rebuilds from snapshot plus ledger. No live socket is attached
+    // here — the socket layer installs its own drop policy (with socket
+    // eviction) when it loads first.
+    onStaleSave: async (board) => {
+      const current = await getLoadedBoard(boardName);
+      if (current !== board) return;
+      deleteLoadedBoard(boardName);
+      board.dispose();
+      logger.warn("board.stale_instance_dropped", {
+        board: boardName,
+        reason: "save_seq_mismatch",
+        source: "board_archive_close",
+      });
     },
-  );
-  setLoadedBoard(boardName, loaded);
-  return loaded;
+  });
 }
 
 /**
@@ -236,6 +225,10 @@ function createBoardArchivePipeline(dependencies) {
     }
 
     const archivedAtMs = clock();
+    // The manifest is deterministic given the sealed board state: no wall
+    // clock fields. A close that crashed between the archive writes and the
+    // lifecycle seal regenerates byte-identical objects, so the archive
+    // store's immutable put accepts the retry as the no-op it is.
     const manifest = {
       format: ARCHIVE_FORMAT,
       boardSessionId: due.boardSessionId,
@@ -244,7 +237,6 @@ function createBoardArchivePipeline(dependencies) {
       finalSeq,
       itemCount: board.authoritativeItemCount(),
       acceptedMutationCount: exported.entryCount,
-      closedAtMs: archivedAtMs,
       integrity: {
         [ARCHIVE_CANVAS_OBJECT]: sha256Hex(canvasContent),
         [ARCHIVE_LEDGER_OBJECT]: sha256Hex(exported.content),
@@ -317,7 +309,6 @@ function createBoardArchivePipeline(dependencies) {
           items: result.itemCount,
           ledger_entries: result.entryCount,
         });
-        await notifyBoardClosed(session.boardName);
       } catch (error) {
         logger.error("hosted.board_session_archive_failed", {
           board: session.boardName,
@@ -337,6 +328,16 @@ function createBoardArchivePipeline(dependencies) {
       } finally {
         closesInFlight.delete(session.boardSessionId);
       }
+      // The session is sealed by now: the completion notification is
+      // best-effort presentation, never part of the archive contract. A
+      // failure here must not be recorded as an archive failure — the next
+      // reconnect of any missed socket re-decides admission honestly.
+      await notifyBoardClosed(session.boardName).catch((error) => {
+        logger.error("hosted.board_session_close_notify_failed", {
+          board: session.boardName,
+          error,
+        });
+      });
     }
     return closed;
   }

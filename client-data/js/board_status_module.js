@@ -107,20 +107,30 @@ export class StatusModule {
   }
 
   /**
+   * The read-only completion view of a closed Board Session, shared by the
+   * sticky flag and the explicit notice so both render identically.
+   *
+   * @returns {BoardStatusView}
+   */
+  boardClosedView() {
+    const Tools = this.getTools();
+    return {
+      hidden: false,
+      state: "paused",
+      title: Tools.i18n.t("event_closed_read_only_title"),
+      detail: Tools.i18n.t("event_closed_read_only_detail"),
+    };
+  }
+
+  /**
    * The read-only completion state of a closed Board Session. Sticky: once
    * the event has ended the board stays read-only, so the status wins over
    * transient notices and stays until the participant leaves for the event
    * page.
    */
   showBoardClosedNotice() {
-    const Tools = this.getTools();
     this.boardClosed = true;
-    this.showBoardStatus({
-      hidden: false,
-      state: "paused",
-      title: Tools.i18n.t("event_closed_read_only_title"),
-      detail: Tools.i18n.t("event_closed_read_only_detail"),
-    });
+    this.showBoardStatus(this.boardClosedView());
   }
 
   /**
@@ -155,12 +165,7 @@ export class StatusModule {
   getBoardStatusView() {
     const Tools = this.getTools();
     if (this.boardClosed) {
-      return {
-        hidden: false,
-        state: "paused",
-        title: Tools.i18n.t("event_closed_read_only_title"),
-        detail: Tools.i18n.t("event_closed_read_only_detail"),
-      };
+      return this.boardClosedView();
     }
     if (this.explicitBoardStatus) {
       return this.explicitBoardStatus;

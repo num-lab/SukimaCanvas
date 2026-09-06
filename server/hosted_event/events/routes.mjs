@@ -11,6 +11,7 @@ import {
   seeOther,
   translate,
 } from "../http_forms.mjs";
+import { createStoreLifecycleAdvancer } from "../lifecycle.mjs";
 import { accessCodeMatches } from "../memberships/access_codes.mjs";
 import { MAX_REASON_LENGTH } from "../moderation/store.mjs";
 import { moderationSocketEffects } from "../moderation/socket_effects.mjs";
@@ -104,17 +105,10 @@ function createEventRoutes(dependencies) {
    * authoritative status at the current service clock. Idempotent, so calling
    * it on every read is safe. The composed module injects the full refresh
    * (including closes); the standalone default only advances the lifecycle.
-   *
-   * @returns {Promise<void>}
    */
   const advanceLifecycleNow =
     dependencies.advanceEventLifecycle ||
-    (async () => {
-      await organizerStore.advanceLifecycle({
-        now: clock(),
-        closeDrainMs: config.HOSTED_BOARD_SESSION_CLOSE_DRAIN_MS,
-      });
-    });
+    createStoreLifecycleAdvancer({ organizerStore, clock, config });
 
   /**
    * @param {number} ms

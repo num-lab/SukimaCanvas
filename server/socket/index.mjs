@@ -1,6 +1,6 @@
 import * as socketIO from "socket.io";
 import { SocketEvents } from "../../client-data/js/socket_events.js";
-import { BoardData } from "../board/data.mjs";
+import { loadOrGetLoadedBoard } from "../board/board_loader.mjs";
 import {
   deleteLoadedBoard,
   discardPinnedReplayBaselinesBefore,
@@ -9,8 +9,9 @@ import {
   getNextReplayPinExpiry,
   listLoadedBoards,
   resetBoardRegistry,
-  setLoadedBoard,
 } from "../board/registry.mjs";
+
+/** @import { BoardData } from "../board/data.mjs" */
 import { isGovernanceRole } from "../hosted_event/admission/index.mjs";
 import {
   moderationSocketEffects,
@@ -712,7 +713,13 @@ async function startIO(app, config, runtime) {
   return io;
 }
 
-/** Returns a promise to a BoardData with the given name
+/**
+ * Returns a promise to a BoardData with the given name. The load-or-reuse
+ * instance cache itself lives in the shared board loader, so the close
+ * pipeline observes the same instances; this wrapper adds the socket layer's
+ * stale-save policy (drop the instance and disconnect its sockets) and the
+ * load gauge.
+ *
  * @param {string} name
  * @param {ServerConfig} config
  * @returns {Promise<BoardData>}
@@ -726,26 +733,17 @@ function getBoard(name, config) {
       });
     }
     return loadedBoard;
-  } else {
-    const board = BoardData.load(name, config).then((loaded) => {
-      /**
-       * @param {{actualFileSeq?: number, durationMs?: number, saveTargetSeq?: number}} details
-       * @returns {Promise<void>}
-       */
-      loaded.onStaleSave = function onStaleSave(details) {
-        return handleStaleBoardSave(loaded, details);
-      };
-      return loaded;
-    });
-    setLoadedBoard(name, board);
-    updateLoadedBoardsGauge();
-    if (logger.isEnabled("debug")) {
-      logger.debug("board.cache_miss", {
-        board: name,
-      });
-    }
-    return board;
   }
+  const board = loadOrGetLoadedBoard(name, config, {
+    onStaleSave: handleStaleBoardSave,
+  });
+  updateLoadedBoardsGauge();
+  if (logger.isEnabled("debug")) {
+    logger.debug("board.cache_miss", {
+      board: name,
+    });
+  }
+  return board;
 }
 
 const socketBroadcastRuntime = {

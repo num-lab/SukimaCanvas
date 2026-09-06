@@ -162,6 +162,11 @@ test("closing seals accepted writes into the archive and refuses later writes de
       assert.equal(manifest.itemCount, 1);
       assert.equal(manifest.acceptedMutationCount, 1);
       assert.equal(
+        manifest.closedAtMs,
+        undefined,
+        "the manifest is deterministic: no wall-clock fields",
+      );
+      assert.equal(
         manifest.integrity["canvas.svg"],
         sha256(canvas ?? ""),
         "the manifest binds the canvas content",
@@ -438,6 +443,65 @@ test("already-admitted writes complete across the barrier; later ones are refuse
       assert.equal(manifest.finalSeq, 1);
       assert.ok(canvas?.includes('id="rect-1"'));
       assert.ok(!canvas?.includes('id="rect-2"'));
+    },
+  );
+});
+
+test("a close that crashed between archiving and sealing retries over the identical archive", async () => {
+  await createSocketScenario(
+    { historyDirPrefix: "wbo-archive-crash-" },
+    async (scenario) => {
+      const fixture = await createFixture(Date.now(), {
+        config: scenario.sockets.__config,
+      });
+      const alice = await openAndConnect(
+        scenario,
+        fixture,
+        "alice@example.com",
+        "socket-alice",
+      );
+      await scenario.invoke(
+        alice.created,
+        "broadcast",
+        rectangleCreate("rect-1", "cm-1"),
+      );
+      fixture.holder.now = fixture.boardSession.endsAtMs + MINUTE;
+      await fixture.organizerStore.advanceLifecycle({
+        now: fixture.holder.now,
+      });
+
+      // The archive lands, but the process dies before the lifecycle seal.
+      const realSeal = fixture.organizerStore.markBoardSessionClosed;
+      fixture.organizerStore.markBoardSessionClosed = async () => ({
+        ok: false,
+        reason: "not_closing",
+      });
+      await fixture.boardArchivePipeline.runDueCloses({
+        now: fixture.holder.now,
+      });
+      assert.equal(
+        fixture.organizerStore.getBoardSessionForEvent(fixture.event.eventId)
+          ?.status,
+        "closing",
+      );
+      fixture.organizerStore.markBoardSessionClosed = realSeal;
+
+      // The retry regenerates byte-identical archive objects, so the
+      // immutable put accepts them and the session finally seals.
+      const retry = await fixture.boardArchivePipeline.runDueCloses({
+        now: fixture.holder.now,
+      });
+      assert.equal(retry.length, 1);
+      assert.equal(
+        fixture.organizerStore.getBoardSessionForEvent(fixture.event.eventId)
+          ?.status,
+        "closed",
+      );
+      const { manifest } = await readArchive(
+        fixture,
+        fixture.boardSession.boardSessionId,
+      );
+      assert.equal(manifest.finalSeq, 1);
     },
   );
 });

@@ -106,7 +106,6 @@ async function createFixture(now, { seats = 2, config } = {}) {
     ...eventModeration,
     moderationStore,
     registerBoardCloseEffects: boardArchivePipeline.registerCloseEffects,
-    runBoardSessionCloses: boardArchivePipeline.runDueCloses,
     // Mirrors the composed hosted module: admission advances the durable
     // lifecycle and seals drained sessions against the fixture clock before
     // every decision.
