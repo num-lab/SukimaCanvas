@@ -67,6 +67,7 @@ function composeRoutes(fixture) {
     home: templateStub(),
     event: templateStub(),
     organizerEvent: templateStub(),
+    organizerEventAudit: templateStub(),
     publishedCanvas: templateStub(),
   };
   const routes = createEventRoutes({

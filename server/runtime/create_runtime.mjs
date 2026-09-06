@@ -285,6 +285,10 @@ function createServerRuntime(config) {
       config,
       "organizer-event.html",
     ),
+    organizerEventAuditTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "organizer-event-audit.html",
+    ),
     publishedCanvasTemplatePath: configuredTemplatePathWithBundledFallback(
       config,
       "published-canvas.html",

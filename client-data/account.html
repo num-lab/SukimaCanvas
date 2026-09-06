@@ -106,6 +106,24 @@
           <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_account_revoke_others}}</button>
         </form>
         {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_account_delete_title}}</h2>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_account_delete_hint}}</p>
+        <form method="post" action="account/delete" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-account-delete-password">{{hostedTranslations.hosted_account_current_password_label}}</label>
+            <input
+              type="password"
+              id="hosted-account-delete-password"
+              name="currentPassword"
+              required
+              maxlength="128"
+              autocomplete="current-password"
+            />
+          </div>
+          <button type="submit" class="hosted-submit hosted-submit-danger">{{hostedTranslations.hosted_account_delete_submit}}</button>
+        </form>
         <p class="hosted-account-alt">
           <a href="logout">{{hostedTranslations.hosted_nav_logout}}</a>
         </p>

@@ -118,8 +118,38 @@ function listPublishedContributorIds(publishedCanvas) {
   return [...contributorIds];
 }
 
+/**
+ * Counts the Board Items per Participant Identifier on a stored canvas —
+ * the Owner/Admin audit view's Board Item Attribution. Unlike the published
+ * contributor listing this runs on the Private Board Archive canvas, whose
+ * items carry every creator's server-stamped identifier regardless of the
+ * publication policy.
+ *
+ * @param {string} storedCanvas
+ * @returns {{participantId: string, itemCount: number}[]}
+ */
+function countStoredCanvasCreators(storedCanvas) {
+  const envelope = parseStoredSvgEnvelope(String(storedCanvas || ""));
+  /** @type {Map<string, number>} */
+  const counts = new Map();
+  for (const item of parseStoredSvgItems(envelope.drawingAreaContent)) {
+    const createdBy = item.attributes[CREATED_BY_ATTRIBUTE];
+    if (typeof createdBy === "string" && createdBy !== "") {
+      counts.set(createdBy, (counts.get(createdBy) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([participantId, itemCount]) => ({ participantId, itemCount }))
+    .sort(
+      (left, right) =>
+        right.itemCount - left.itemCount ||
+        left.participantId.localeCompare(right.participantId),
+    );
+}
+
 export {
   CREATED_BY_ATTRIBUTE,
+  countStoredCanvasCreators,
   derivePublishedCanvas,
   listPublishedContributorIds,
 };

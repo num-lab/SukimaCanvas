@@ -127,7 +127,12 @@ test.describe("hosted account recovery and session security", () => {
     await registerVerifyAndLogin(page, server, email, originalPassword);
 
     await page.goto(`${server.serverUrl}/account?lang=en`);
-    await page.getByLabel("Current password").fill(originalPassword);
+    // The account page also carries the delete-account form with its own
+    // current-password field; scope the locator to the change-password form.
+    const changePasswordForm = page.locator('form[action="account/password"]');
+    await changePasswordForm
+      .getByLabel("Current password")
+      .fill(originalPassword);
     await page.getByLabel("New password", { exact: true }).fill(newPassword);
     await page.getByRole("button", { name: "Update password" }).click();
     await expect(page.getByText(/password has been updated/)).toBeVisible();

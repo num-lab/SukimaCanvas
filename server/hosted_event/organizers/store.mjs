@@ -158,7 +158,39 @@ function eventLifecycleState(event, now) {
  *   accessCodeSetAtMs: number | null,
  *   entryLocked: boolean,
  *   entryLockedAtMs: number | null,
+ *   outcomeDeletion: StoredEventOutcomeDeletion | null,
+ *   outcomePurgeFailure: StoredOutcomePurgeFailure | null,
  * }} StoredEvent
+ */
+/**
+ * An Owner/Admin's early deletion of an event's outcomes, inside its
+ * recoverable window: the request immediately invalidates the Published
+ * Canvas and every Image Export download link, and when `purgeAtMs` elapses
+ * the retention pipeline purges the Private Board Archive, Item Attribution,
+ * Change Audit, and associated exports. Restoring the request inside the
+ * window removes the record entirely; after the purge completes
+ * `purgedAtMs` stays as the durable marker of what happened.
+ *
+ * @typedef {{
+ *   requestedAtMs: number,
+ *   requestedByAccountId: string,
+ *   purgeAtMs: number,
+ *   purgedAtMs: number | null,
+ * }} StoredEventOutcomeDeletion
+ */
+/**
+ * The durable failure context of an event's last failed outcome purge, kept
+ * on the event so it is visible on the organizer event console and the
+ * operator console and retried after its backoff. Cleared when a purge
+ * finally succeeds.
+ *
+ * @typedef {{
+ *   code: string,
+ *   message: string,
+ *   attempts: number,
+ *   firstFailedAtMs: number,
+ *   lastFailedAtMs: number,
+ * }} StoredOutcomePurgeFailure
  */
 /**
  * @typedef {"scheduled" | "open" | "ended"} EventLifecycleState
@@ -215,6 +247,7 @@ function eventLifecycleState(event, now) {
  *   archivedAtMs: number | null,
  *   archivedFinalSeq: number | null,
  *   archiveFailure: StoredBoardSessionArchiveFailure | null,
+ *   outcomesPurgedAtMs: number | null,
  * }} StoredBoardSession
  */
 /**
@@ -422,6 +455,9 @@ function createFileOrganizerStore(options) {
       session.archivedFinalSeq = null;
     }
     if (session.archiveFailure === undefined) session.archiveFailure = null;
+    if (session.outcomesPurgedAtMs === undefined) {
+      session.outcomesPurgedAtMs = null;
+    }
   }
 
   function ensureLoaded() {
@@ -484,6 +520,10 @@ function createFileOrganizerStore(options) {
       if (event.entryLockedAtMs === undefined) event.entryLockedAtMs = null;
       if (typeof event.boardName !== "string" || event.boardName === "") {
         event.boardName = randomEventBoardName();
+      }
+      if (event.outcomeDeletion === undefined) event.outcomeDeletion = null;
+      if (event.outcomePurgeFailure === undefined) {
+        event.outcomePurgeFailure = null;
       }
       eventsById.set(event.eventId, event);
       eventIdsByPublicId.set(event.publicId, event.eventId);
@@ -1619,6 +1659,8 @@ function createFileOrganizerStore(options) {
       accessCodeSetAtMs: null,
       entryLocked: false,
       entryLockedAtMs: null,
+      outcomeDeletion: null,
+      outcomePurgeFailure: null,
     });
     eventIdsByPublicId.set(publicId, eventId);
     eventIdsByBoardName.set(boardName, eventId);
@@ -1642,6 +1684,7 @@ function createFileOrganizerStore(options) {
       archivedAtMs: null,
       archivedFinalSeq: null,
       archiveFailure: null,
+      outcomesPurgedAtMs: null,
     });
     reservation.status = "approved";
     reservation.decidedAtMs = now;
@@ -1957,6 +2000,407 @@ function createFileOrganizerStore(options) {
     });
     await enqueueWrite(persistNow);
     return { ok: true };
+  }
+
+  // --- outcome retention, early deletion, and expiry purge -----------------
+
+  /**
+   * Every Board Session of an event, oldest first. The retention pipeline and
+   * the event audit view iterate them: outcomes are archived per session, so
+   * a purge must cover each one.
+   *
+   * @param {string} eventId
+   * @returns {StoredBoardSession[]}
+   */
+  function listBoardSessionsForEvent(eventId) {
+    ensureLoaded();
+    if (typeof eventId !== "string" || eventId === "") return [];
+    return [...boardSessionsById.values()]
+      .filter((session) => session.eventId === eventId)
+      .sort((left, right) => left.createdAtMs - right.createdAtMs);
+  }
+
+  /**
+   * Whether the event still holds recoverable outcomes: at least one closed
+   * Board Session that is neither purged nor waiting for an archive. Early
+   * deletion and the retention deadline both only apply to real outcomes.
+   *
+   * @param {StoredEvent} event
+   * @returns {boolean}
+   */
+  function eventHasPurgeableOutcomes(event) {
+    for (const session of listBoardSessionsForEvent(event.eventId)) {
+      if (
+        session.status === "closed" &&
+        session.archiveKey !== null &&
+        session.outcomesPurgedAtMs === null
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * An Owner/Admin's early deletion of the event's outcomes: the request
+   * itself changes no outcome objects — it enters the recoverable window and
+   * invalidates the Published Canvas and export download links because every
+   * read path consults this record. Requires a closed, archived, not-yet-
+   * purged Board Session, and is refused while a deletion is already pending
+   * or the outcomes are already purged.
+   *
+   * @param {{eventId: string, actorAccountId: string, deleteWindowMs: number}} input
+   * @returns {Promise<{ok: true, deletion: StoredEventOutcomeDeletion} | {ok: false, reason: "not_found" | "not_archived" | "already_pending" | "already_purged"}>}
+   */
+  async function requestEventOutcomeDeletion(input) {
+    ensureLoaded();
+    const event = eventsById.get(String(input.eventId || ""));
+    if (!event) return { ok: false, reason: "not_found" };
+    if (event.outcomeDeletion && event.outcomeDeletion.purgedAtMs === null) {
+      return { ok: false, reason: "already_pending" };
+    }
+    if (event.outcomeDeletion && event.outcomeDeletion.purgedAtMs !== null) {
+      return { ok: false, reason: "already_purged" };
+    }
+    if (!eventHasPurgeableOutcomes(event)) {
+      return { ok: false, reason: "not_archived" };
+    }
+    const now = clock();
+    const deleteWindowMs =
+      typeof input.deleteWindowMs === "number" &&
+      Number.isFinite(input.deleteWindowMs) &&
+      input.deleteWindowMs >= 0
+        ? input.deleteWindowMs
+        : 0;
+    /** @type {StoredEventOutcomeDeletion} */
+    const deletion = {
+      requestedAtMs: now,
+      requestedByAccountId: String(input.actorAccountId || ""),
+      purgeAtMs: now + deleteWindowMs,
+      purgedAtMs: null,
+    };
+    event.outcomeDeletion = deletion;
+    recordAudit({
+      actorAccountId: deletion.requestedByAccountId,
+      actorKind: "account",
+      action: "event_outcome.delete_requested",
+      subjectType: "event",
+      subjectId: event.eventId,
+      organizerId: event.organizerId,
+    });
+    await enqueueWrite(persistNow);
+    return { ok: true, deletion };
+  }
+
+  /**
+   * Restores a pending outcome deletion inside its recoverable window. The
+   * request changed no outcome objects, so the restore is pure state removal:
+   * the Published Canvas, export links, archive, attribution, and audit all
+   * come back exactly as they were, by construction. A stale form (nothing
+   * pending) or a request after the window elapsed is refused without side
+   * effects.
+   *
+   * @param {{eventId: string, actorAccountId: string}} input
+   * @returns {Promise<{ok: true} | {ok: false, reason: "not_found" | "not_pending" | "window_elapsed"}>}
+   */
+  async function restoreEventOutcomeDeletion(input) {
+    ensureLoaded();
+    const event = eventsById.get(String(input.eventId || ""));
+    if (!event) return { ok: false, reason: "not_found" };
+    const deletion = event.outcomeDeletion;
+    if (!deletion || deletion.purgedAtMs !== null) {
+      return { ok: false, reason: "not_pending" };
+    }
+    if (clock() >= deletion.purgeAtMs) {
+      return { ok: false, reason: "window_elapsed" };
+    }
+    event.outcomeDeletion = null;
+    // A purge attempt that already failed against this pending deletion is
+    // reset together with it: restoring means the owner changed their mind,
+    // and a later due trigger records its own fresh failure context.
+    event.outcomePurgeFailure = null;
+    recordAudit({
+      actorAccountId: String(input.actorAccountId || ""),
+      actorKind: "account",
+      action: "event_outcome.delete_restored",
+      subjectType: "event",
+      subjectId: event.eventId,
+      organizerId: event.organizerId,
+    });
+    await enqueueWrite(persistNow);
+    return { ok: true };
+  }
+
+  /**
+   * Finalizes a completed outcome purge: the closed Board Sessions the purge
+   * covered are stamped purged (their archive key cleared, so no surface can
+   * keep treating the outcomes as present), a pending deletion record keeps
+   * its durable `purgedAtMs` marker once any purge ran (a partially purged
+   * event must never restore as if untouched), and the failure context — if
+   * any — is cleared. Without `sessionIds` every still-stamped closed session
+   * of the event is covered (the early-deletion purge); with `sessionIds`
+   * exactly those are stamped, so a retention-driven purge of one session can
+   * never destroy a newer session's outcomes before their own 90 days.
+   * Idempotent: sessions already purged and already-finalized deletions are
+   * skipped, so repeated calls after a crash replay safely.
+   *
+   * @param {{eventId: string, sessionIds?: string[]}} input
+   * @returns {Promise<{purgedSessions: number, finalizedDeletion: boolean}>}
+   */
+  async function markEventOutcomesPurged(input) {
+    ensureLoaded();
+    const event = eventsById.get(String(input.eventId || ""));
+    if (!event) return { purgedSessions: 0, finalizedDeletion: false };
+    const now = clock();
+    const scopedIds =
+      Array.isArray(input.sessionIds) ? new Set(input.sessionIds) : null;
+    let purgedSessions = 0;
+    for (const session of listBoardSessionsForEvent(event.eventId)) {
+      if (
+        session.outcomesPurgedAtMs !== null ||
+        session.status !== "closed" ||
+        session.archiveKey === null ||
+        (scopedIds !== null && !scopedIds.has(session.boardSessionId))
+      ) {
+        continue;
+      }
+      session.outcomesPurgedAtMs = now;
+      session.archiveKey = null;
+      purgedSessions += 1;
+    }
+    let finalizedDeletion = false;
+    if (
+      event.outcomeDeletion &&
+      event.outcomeDeletion.purgedAtMs === null &&
+      // Finalize once any purge ran — a partially purged event must never
+      // restore as if untouched — or once nothing purgeable remains (an
+      // earlier retention purge may already have cleared every outcome).
+      (purgedSessions > 0 || !eventHasPurgeableOutcomes(event))
+    ) {
+      event.outcomeDeletion.purgedAtMs = now;
+      finalizedDeletion = true;
+    }
+    if (purgedSessions > 0 || finalizedDeletion) {
+      event.outcomePurgeFailure = null;
+      recordAudit({
+        actorAccountId: "",
+        actorKind: "system",
+        action: "event_outcome.purged",
+        subjectType: "event",
+        subjectId: event.eventId,
+        organizerId: event.organizerId,
+      });
+      await enqueueWrite(persistNow);
+    }
+    return { purgedSessions, finalizedDeletion };
+  }
+
+  /**
+   * Records one failed outcome purge attempt against the event, mirroring the
+   * Board Session archive-failure contract: the first failure opens the
+   * durable context, a failing retry refreshes it, and the automatic backoff
+   * plus the operator retry route own the recovery. Unknown events are
+   * ignored.
+   *
+   * @param {{eventId: string, code?: string, message?: string}} input
+   * @returns {Promise<void>}
+   */
+  async function recordEventOutcomePurgeFailed(input) {
+    ensureLoaded();
+    const event = eventsById.get(String(input.eventId || ""));
+    if (!event) return;
+    const now = clock();
+    const code =
+      clampString(String(input.code || "internal"), 64) || "internal";
+    const message = clampString(
+      String(input.message || ""),
+      MAX_ARCHIVE_FAILURE_MESSAGE_LENGTH,
+    );
+    const previous = event.outcomePurgeFailure;
+    event.outcomePurgeFailure = {
+      code,
+      message,
+      attempts: (previous?.attempts || 0) + 1,
+      firstFailedAtMs: previous?.firstFailedAtMs ?? now,
+      lastFailedAtMs: now,
+    };
+    recordAudit({
+      actorAccountId: "",
+      actorKind: "system",
+      action: "event_outcome.purge_failed",
+      subjectType: "event",
+      subjectId: event.eventId,
+      organizerId: event.organizerId,
+    });
+    logger.warn("hosted.event_outcome_purge_failed", {
+      event: event.eventId,
+      failure_code: code,
+      attempts: event.outcomePurgeFailure.attempts,
+    });
+    await enqueueWrite(persistNow);
+  }
+
+  /**
+   * A Platform Operator's authorized manual retry of a failed outcome purge:
+   * clearing the failure context makes the event due again on the very next
+   * retention pass, without waiting for the backoff. Guarded like the archive
+   * retry: an event without a failure context is refused deterministically.
+   *
+   * @param {{eventId: string, operatorAccountId: string}} input
+   * @returns {Promise<{ok: true} | {ok: false, reason: "not_found" | "not_failed"}>}
+   */
+  async function retryEventOutcomePurge(input) {
+    ensureLoaded();
+    const event = eventsById.get(String(input.eventId || ""));
+    if (!event) return { ok: false, reason: "not_found" };
+    if (!event.outcomePurgeFailure) return { ok: false, reason: "not_failed" };
+    event.outcomePurgeFailure = null;
+    recordAudit({
+      actorAccountId: String(input.operatorAccountId || ""),
+      actorKind: "operator",
+      action: "event_outcome.purge_retry_requested",
+      subjectType: "event",
+      subjectId: event.eventId,
+      organizerId: event.organizerId,
+    });
+    await enqueueWrite(persistNow);
+    return { ok: true };
+  }
+
+  /**
+   * The retention pipeline's work queue: events whose outcomes must be purged
+   * now because a pending deletion's recoverable window elapsed, or because a
+   * closed Board Session's retention deadline passed — minus events whose
+   * last purge attempt failed and is still inside its automatic retry
+   * backoff. A backoff of zero retries on the next pass. Read-only: the purge
+   * itself is the pipeline's guarded mutation, so concurrent passes stay
+   * serialized by the pipeline's in-flight guard.
+   *
+   * @param {{now: number, retentionMs?: number, retryMs?: number}} input
+   * @returns {{eventId: string, organizerId: string, boardName: string}[]}
+   */
+  function listEventsDueForOutcomePurge(input) {
+    ensureLoaded();
+    const now = input.now;
+    const retentionMs =
+      typeof input.retentionMs === "number" &&
+      Number.isFinite(input.retentionMs)
+        ? Math.max(0, input.retentionMs)
+        : 0;
+    const retryMs =
+      typeof input.retryMs === "number" && Number.isFinite(input.retryMs)
+        ? Math.max(0, input.retryMs)
+        : 0;
+    /** @type {{eventId: string, organizerId: string, boardName: string}[]} */
+    const due = [];
+    for (const event of eventsById.values()) {
+      const deletionPending =
+        event.outcomeDeletion !== null &&
+        event.outcomeDeletion.purgedAtMs === null &&
+        now >= event.outcomeDeletion.purgeAtMs;
+      // Both triggers are evaluated independently: a pending deletion whose
+      // recoverable window runs past the retention deadline must not extend
+      // how long the outcomes are kept — whichever elapses first purges.
+      let retentionElapsed = false;
+      if (retentionMs > 0) {
+        for (const session of listBoardSessionsForEvent(event.eventId)) {
+          if (
+            session.status === "closed" &&
+            session.archiveKey !== null &&
+            session.outcomesPurgedAtMs === null &&
+            session.archivedAtMs !== null &&
+            now >= session.archivedAtMs + retentionMs
+          ) {
+            retentionElapsed = true;
+            break;
+          }
+        }
+      }
+      if (!deletionPending && !retentionElapsed) continue;
+      const failure = event.outcomePurgeFailure;
+      if (failure && retryMs > 0 && now < failure.lastFailedAtMs + retryMs) {
+        continue;
+      }
+      due.push({
+        eventId: event.eventId,
+        organizerId: event.organizerId,
+        boardName: event.boardName,
+      });
+    }
+    return due;
+  }
+
+  /**
+   * The outcome-purge work list for the operator console: events with a
+   * pending deletion or a failed purge, oldest relevant timestamp first, so
+   * failures stay visible even while their retry backoff runs. A read-only
+   * projection — recovery stays behind the dedicated retry method.
+   *
+   * @returns {{event: StoredEvent, deletion: StoredEventOutcomeDeletion | null}[]}
+   */
+  function listOutcomePurgeWork() {
+    ensureLoaded();
+    return [...eventsById.values()]
+      .filter(
+        (event) =>
+          (event.outcomeDeletion !== null &&
+            event.outcomeDeletion.purgedAtMs === null) ||
+          event.outcomePurgeFailure !== null,
+      )
+      .sort(
+        (left, right) =>
+          (left.outcomePurgeFailure?.lastFailedAtMs ||
+            left.outcomeDeletion?.requestedAtMs ||
+            0) -
+          (right.outcomePurgeFailure?.lastFailedAtMs ||
+            right.outcomeDeletion?.requestedAtMs ||
+            0),
+      )
+      .map((event) => ({
+        event,
+        deletion: event.outcomeDeletion,
+      }));
+  }
+
+  /**
+   * The event-scoped Change Audit trail for one event: administrative records
+   * whose subject is the event, its reservation, or one of its Board
+   * Sessions, newest first. This is the Owner/Admin audit view's admin-action
+   * history; board write history comes from the durable mutation ledger.
+   *
+   * @param {string} eventId
+   * @param {{limit?: number}} [options]
+   * @returns {StoredAuditRecord[]}
+   */
+  function listAuditForEvent(eventId, options = {}) {
+    ensureLoaded();
+    const limit =
+      typeof options.limit === "number" && options.limit > 0
+        ? options.limit
+        : 50;
+    const normalized = String(eventId || "");
+    const event = eventsById.get(normalized);
+    if (!event) return [];
+    const sessionIds = new Set(
+      listBoardSessionsForEvent(normalized).map(
+        (session) => session.boardSessionId,
+      ),
+    );
+    return auditRecords
+      .filter((record) => {
+        if (record.subjectType === "event") {
+          return record.subjectId === normalized;
+        }
+        if (record.subjectType === "board_session") {
+          return sessionIds.has(record.subjectId);
+        }
+        if (record.subjectType === "reservation") {
+          return record.subjectId === event.reservationId;
+        }
+        return false;
+      })
+      .sort((left, right) => right.createdAtMs - left.createdAtMs)
+      .slice(0, limit);
   }
 
   /**
@@ -2730,6 +3174,7 @@ function createFileOrganizerStore(options) {
     declineInvitation,
     revokeInvitation,
     listAuditForOrganizer,
+    listAuditForEvent,
     createReservation,
     updateReservation,
     submitReservation,
@@ -2762,6 +3207,14 @@ function createFileOrganizerStore(options) {
     getEventByBoardName,
     getEventForOrganizer,
     getBoardSessionForEvent,
+    listBoardSessionsForEvent,
+    requestEventOutcomeDeletion,
+    restoreEventOutcomeDeletion,
+    markEventOutcomesPurged,
+    recordEventOutcomePurgeFailed,
+    retryEventOutcomePurge,
+    listEventsDueForOutcomePurge,
+    listOutcomePurgeWork,
     listPublicDiscoverableEvents,
     updateEventDisplay,
     setEventCover,

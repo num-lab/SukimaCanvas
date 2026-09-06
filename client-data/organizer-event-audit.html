@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="{{hostedLanguage}}" dir="{{hostedDirection}}">
+  <head>
+    <meta charset="utf-8" />
+    <title>{{hostedEventName}}</title>
+    <base href="{{baseHref}}" />
+    <link rel="stylesheet" href="hosted.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/x-icon" sizes="16x16" href="favicon.ico" />
+    <link rel="apple-touch-icon" href="favicon.svg" />
+    {{{htmlHeadSnippet}}}
+  </head>
+  <body class="hosted-shell">
+    <header class="hosted-header">
+      <a class="hosted-brand" href=".">SukimaCanvas</a>
+      <nav aria-label="{{hostedTranslations.hosted_language_label}}">
+        {{#if hostedAccount}}
+        <span class="hosted-account-email">{{hostedAccount.email}}</span>
+        <a href="account">{{hostedTranslations.hosted_nav_account}}</a>
+        <a href="organizer">{{hostedTranslations.hosted_nav_organizer}}</a>
+        {{#if hostedAccount.isOperator}}
+        <a href="operator">{{hostedTranslations.hosted_nav_operator}}</a>
+        {{/if}}
+        <a href="logout">{{hostedTranslations.hosted_nav_logout}}</a>
+        {{else}}
+        <a href="login">{{hostedTranslations.hosted_nav_login}}</a>
+        <a href="register">{{hostedTranslations.hosted_nav_register}}</a>
+        {{/if}}
+        <a href="source">{{hostedTranslations.hosted_source_link}}</a>
+        <details class="hosted-language-picker">
+          <summary>{{hostedLanguage}}</summary>
+          <ul>
+            {{#hostedLanguageLinks}}
+            <li><a href="{{href}}" hreflang="{{language}}">{{language}}</a></li>
+            {{/hostedLanguageLinks}}
+          </ul>
+        </details>
+      </nav>
+    </header>
+
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-event-audit-title">
+        <h1 id="hosted-event-audit-title">{{hostedTranslations.hosted_outcome_audit_title}}</h1>
+        <p class="hosted-account-note">{{hostedEventName}} · {{hostedEventStatusLabel}}</p>
+        <p class="hosted-account-alt">
+          <a href="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}">{{hostedTranslations.hosted_outcome_audit_back}}</a>
+        </p>
+
+        <dl class="hosted-operator-detail">
+          <dt>{{hostedTranslations.hosted_event_starts_label}}</dt>
+          <dd>{{hostedEventStartsAt}}</dd>
+          <dt>{{hostedTranslations.hosted_event_ends_label}}</dt>
+          <dd>{{hostedEventEndsAt}}</dd>
+          {{#if hostedEventSessionStatusLabel}}
+          <dt>{{hostedTranslations.hosted_outcome_session_status_label}}</dt>
+          <dd>{{hostedEventSessionStatusLabel}}</dd>
+          {{/if}}
+        </dl>
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_outcome_retention_title}}</h2>
+        {{#if hostedOutcomeDeletionPending}}
+        <p class="hosted-form-error" role="status">
+          {{hostedTranslations.hosted_outcome_deletion_pending_note}} {{hostedOutcomePurgeAt}}
+        </p>
+        {{else if hostedOutcomePurged}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_outcome_purged_note}} {{hostedOutcomePurgedAt}}</p>
+        {{else}}
+        <p class="hosted-account-note">
+          {{hostedTranslations.hosted_outcome_retention_note}} {{hostedOutcomeRetentionUntil}}
+          {{#if hostedOutcomeRetentionDaysLeft}}({{hostedOutcomeRetentionDaysLeft}}){{/if}}
+        </p>
+        {{#if hostedOutcomeRetentionExpired}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_outcome_retention_expired_note}}</p>
+        {{/if}}
+        {{#if hostedOutcomeRetentionDisabled}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_outcome_retention_disabled_note}}</p>
+        {{/if}}
+        {{/if}}
+        {{#if hostedOutcomePurgeFailed}}
+        <p class="hosted-form-error" role="alert">
+          {{hostedTranslations.hosted_outcome_purge_failed_note}} {{hostedOutcomePurgeFailureLabel}} ({{hostedOutcomePurgeFailureAttempts}})
+        </p>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_audit_attribution_title}}</h2>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_audit_attribution_hint}}</p>
+        {{#if hostedAuditHasAttribution}}
+        <ul class="hosted-moderator-list">
+          {{#hostedAuditAttribution}}
+          <li class="hosted-moderator-item">
+            <code class="hosted-audit-participant">{{participantId}}</code>
+            <span class="hosted-audit-count">{{../hostedTranslations.hosted_audit_items_label}}: {{itemCount}}</span>
+          </li>
+          {{/hostedAuditAttribution}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_audit_attribution_empty}}</p>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_audit_change_title}}</h2>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_audit_change_hint}}</p>
+        {{#if hostedAuditHasChangeRecords}}
+        <ul class="hosted-moderation-log">
+          {{#hostedAuditChangeRecords}}
+          <li class="hosted-moderation-record">
+            <span class="hosted-moderation-record-time">{{createdAt}}</span>
+            <span class="hosted-moderation-record-action">{{actionLabel}}</span>
+            <span class="hosted-audit-participant"><code>{{participantId}}</code></span>
+            <span class="hosted-audit-seq">#{{seq}}</span>
+          </li>
+          {{/hostedAuditChangeRecords}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_audit_change_empty}}</p>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_audit_admin_title}}</h2>
+        {{#if hostedAuditHasAdminActivity}}
+        <ul class="hosted-moderation-log">
+          {{#hostedAuditAdminActivity}}
+          <li class="hosted-moderation-record">
+            <span class="hosted-moderation-record-time">{{createdAt}}</span>
+            <span class="hosted-moderation-record-action">{{actionLabel}}</span>
+            <span class="hosted-moderation-record-operator">{{actorLabel}}</span>
+          </li>
+          {{/hostedAuditAdminActivity}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_audit_admin_empty}}</p>
+        {{/if}}
+      </section>
+    </main>
+
+    <footer class="hosted-footer">
+      <span>{{hostedTranslations.hosted_service_name}}</span>
+      <a href="source">{{hostedTranslations.hosted_source_link}}</a>
+    </footer>
+  </body>
+</html>

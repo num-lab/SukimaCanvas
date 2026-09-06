@@ -6,12 +6,16 @@ import { resolveRequestClientIpSafe } from "../../socket/policy.mjs";
 import { resolveSignedInAccountFromRequest } from "../accounts/routes.mjs";
 import { sniffImage } from "../assets/image_validation.mjs";
 import { readMultipartFormData } from "../assets/upload.mjs";
+import { EXPORT_JOB_FAILURE_CODES } from "../export/pipeline.mjs";
+import { EXPORT_FAILURE_CODES } from "../export/render.mjs";
 import {
   createFormSecurity,
   readFormBody,
   seeOther,
   translate,
 } from "../http_forms.mjs";
+import { createFileBoardMutationLedger } from "../ledger/store.mjs";
+import { MutationType } from "../../../client-data/js/mutation_type.js";
 import { createStoreLifecycleAdvancer } from "../lifecycle.mjs";
 import { accessCodeMatches } from "../memberships/access_codes.mjs";
 import { moderationSocketEffects } from "../moderation/socket_effects.mjs";
@@ -21,12 +25,11 @@ import {
   MAX_EVENT_TAGLINE_LENGTH,
 } from "../organizers/store.mjs";
 import {
+  countStoredCanvasCreators,
   derivePublishedCanvas,
   listPublishedContributorIds,
 } from "../publication/canvas.mjs";
-
-import { EXPORT_FAILURE_CODES } from "../export/render.mjs";
-import { EXPORT_JOB_FAILURE_CODES } from "../export/pipeline.mjs";
+import { resolveOutcomePurgeFailureLabel } from "../outcomes.mjs";
 import { formatServiceTime } from "../service_time.mjs";
 
 const { logger } = observability;
@@ -51,6 +54,47 @@ const EXPORT_FAILURE_LABEL_CODES = new Set([
   ...Object.values(EXPORT_FAILURE_CODES),
   ...Object.values(EXPORT_JOB_FAILURE_CODES),
 ]);
+
+/** Mutation type code -> translation key for the Change Audit view. */
+const MUTATION_LABEL_KEYS = {
+  [MutationType.CREATE]: "hosted_audit_mutation_create",
+  [MutationType.UPDATE]: "hosted_audit_mutation_update",
+  [MutationType.DELETE]: "hosted_audit_mutation_delete",
+  [MutationType.APPEND]: "hosted_audit_mutation_append",
+  [MutationType.BATCH]: "hosted_audit_mutation_batch",
+  [MutationType.CLEAR]: "hosted_audit_mutation_clear",
+  [MutationType.COPY]: "hosted_audit_mutation_copy",
+};
+
+/** Event-scoped Change Audit action -> translation key for the audit view. */
+const EVENT_AUDIT_ACTION_KEYS = {
+  "reservation.created": "hosted_event_audit_action_reservation_created",
+  "reservation.submitted": "hosted_event_audit_action_reservation_submitted",
+  "reservation.approved": "hosted_event_audit_action_reservation_approved",
+  "reservation.rejected": "hosted_event_audit_action_reservation_rejected",
+  "reservation.cancelled": "hosted_event_audit_action_reservation_cancelled",
+  "change_request.submitted": "hosted_event_audit_action_change_submitted",
+  "change_request.applied": "hosted_event_audit_action_change_applied",
+  "change_request.rejected": "hosted_event_audit_action_change_rejected",
+  "event.cancelled": "hosted_event_audit_action_event_cancelled",
+  "event.cover_set": "hosted_event_audit_action_cover_set",
+  "event.display_updated": "hosted_event_audit_action_display_updated",
+  "event_moderator.granted": "hosted_event_audit_action_moderator_granted",
+  "event_moderator.revoked": "hosted_event_audit_action_moderator_revoked",
+  "board_session.open": "hosted_event_audit_action_session_open",
+  "board_session.closing": "hosted_event_audit_action_session_closing",
+  "board_session.closed": "hosted_event_audit_action_session_closed",
+  "board_session.archive_failed": "hosted_event_audit_action_session_failed",
+  "board_session.archive_retry_requested":
+    "hosted_event_audit_action_session_retry",
+  "event_outcome.delete_requested":
+    "hosted_event_audit_action_delete_requested",
+  "event_outcome.delete_restored": "hosted_event_audit_action_delete_restored",
+  "event_outcome.purge_failed": "hosted_event_audit_action_purge_failed",
+  "event_outcome.purge_retry_requested":
+    "hosted_event_audit_action_purge_retry",
+  "event_outcome.purged": "hosted_event_audit_action_purged",
+};
 
 /**
  * HTTP flows for Event discovery, Access Code admission, Event Membership,
@@ -97,6 +141,7 @@ const EXPORT_FAILURE_LABEL_CODES = new Set([
  *     home: HostedTemplate,
  *     event: HostedTemplate,
  *     organizerEvent: HostedTemplate,
+ *     organizerEventAudit: HostedTemplate,
  *     publishedCanvas: HostedTemplate,
  *   },
  *   clock?: () => number,
@@ -193,6 +238,41 @@ function createEventRoutes(dependencies) {
       eventName.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") ||
       "board";
     return `${slug}-${exportId.slice(0, 8)}.png`;
+  }
+
+  /**
+   * The one definition of outcome invalidation, shared by every read and
+   * write surface of the Published Canvas and the Image Export downloads: a
+   * pending outcome deletion (inside its recoverable window) or an already
+   * purged Board Session blocks them all. The deletion request itself deletes
+   * nothing, so restore brings every surface back unchanged.
+   *
+   * @param {import("../organizers/store.mjs").StoredEvent} event
+   * @param {import("../organizers/store.mjs").StoredBoardSession | null} session
+   * @returns {{deletionPending: boolean, purged: boolean}}
+   */
+  function eventOutcomeState(event, session) {
+    return {
+      deletionPending:
+        event.outcomeDeletion !== null &&
+        event.outcomeDeletion !== undefined &&
+        event.outcomeDeletion.purgedAtMs === null,
+      purged: Boolean(session && session.outcomesPurgedAtMs !== null),
+    };
+  }
+
+  /**
+   * The single invalidation verdict every Published Canvas and export surface
+   * consults: a pending outcome deletion (inside its recoverable window) or
+   * an already purged Board Session blocks them all.
+   *
+   * @param {import("../organizers/store.mjs").StoredEvent} event
+   * @param {import("../organizers/store.mjs").StoredBoardSession | null} session
+   * @returns {boolean}
+   */
+  function outcomesInvalidated(event, session) {
+    const state = eventOutcomeState(event, session);
+    return state.deletionPending || state.purged;
   }
 
   // --- public discovery ----------------------------------------------------
@@ -694,12 +774,15 @@ function createEventRoutes(dependencies) {
     // definition as the read route, so it never shows a link that would 404
     // (the owner may or may not hold an Event Membership).
     const session = organizerStore.getBoardSessionForEvent(event.eventId);
+    const outcomeState = eventOutcomeState(event, session);
     const publication = session
       ? publicationStore.getPublicationForBoardSession(session.boardSessionId)
       : null;
     const viewerAccount = signedInAccount(ctx);
     const publicationViewable =
       publication !== null &&
+      !outcomeState.deletionPending &&
+      !outcomeState.purged &&
       publicationAudienceAdmits(
         {
           isOrganizerMember: true,
@@ -721,11 +804,13 @@ function createEventRoutes(dependencies) {
     // The Board Image Export queue: one line per job with its lifecycle state.
     // A succeeded job's download link is derived from the export id and its
     // finish time, so the console always renders the currently valid link —
-    // revocation or expiry simply removes it.
+    // revocation, expiry, or a pending outcome deletion simply removes it.
     const exportJobs = exportStore
       .listExportsForEvent(event.eventId, { limit: 20 })
       .map((record) => {
-        const token = exportStore.downloadHrefToken(record.exportId);
+        const token = outcomeState.deletionPending
+          ? null
+          : exportStore.downloadHrefToken(record.exportId);
         const expiry = exportStore.downloadLinkExpiry(record.exportId);
         const failureCode = record.failure
           ? EXPORT_FAILURE_LABEL_CODES.has(record.failure.code)
@@ -758,6 +843,19 @@ function createEventRoutes(dependencies) {
           canRevoke: Boolean(token && expiry),
         };
       });
+    // Outcome retention: the Private Board Archive, Item Attribution, and
+    // Change Audit are retained until a server-derived deadline; an Owner/Admin
+    // can request early deletion, which enters a recoverable window. Every
+    // timestamp here is computed from the service clock — never the client's.
+    const retention = outcomeRetentionView(template, ctx, session);
+    const retentionMs = Number(config.HOSTED_OUTCOME_RETENTION_MS) || 0;
+    const purgeFailureLabel = resolveOutcomePurgeFailureLabel(
+      event.outcomePurgeFailure,
+      translate,
+      template,
+      ctx,
+    );
+
     template.serveWithStatus(ctx.request, ctx.response, statusCode, {
       hostedOrganizerId: organizerId,
       hostedEventId: event.eventId,
@@ -812,11 +910,59 @@ function createEventRoutes(dependencies) {
       hostedPublicationPublishedAt: publication?.publishedAtMs
         ? formatTimestamp(publication.publishedAtMs)
         : "",
-      hostedPublicationCanPublish: session?.status === "closed",
+      hostedPublicationCanPublish:
+        session?.status === "closed" &&
+        Boolean(session?.archiveKey) &&
+        !outcomeState.deletionPending,
       hostedPublicationShareUrl: state.publicationShareUrl,
       hostedPublicationViewHref: publicationViewable
         ? `events/${event.publicId}/canvas`
         : undefined,
+
+      // Outcome retention and early deletion.
+      hostedOutcomeArchived: Boolean(
+        session && session.status === "closed" && session.archiveKey,
+      ),
+      hostedOutcomeRetentionUntil: retention.until,
+      hostedOutcomeRetentionDaysLeft: retention.daysLeft,
+      hostedOutcomeRetentionExpired: retention.expired,
+      hostedOutcomeRetentionDisabled:
+        Boolean(session && session.outcomesPurgedAtMs === null) &&
+        retentionMs === 0,
+      hostedOutcomeDeletionPending: outcomeState.deletionPending,
+      hostedOutcomeDeletionRequestedAt: outcomeState.deletionPending
+        ? formatTimestamp(
+            /** @type {NonNullable<import("../organizers/store.mjs").StoredEvent["outcomeDeletion"]>} */ (
+              event.outcomeDeletion
+            ).requestedAtMs,
+          )
+        : undefined,
+      hostedOutcomePurgeAt: outcomeState.deletionPending
+        ? formatTimestamp(
+            /** @type {NonNullable<import("../organizers/store.mjs").StoredEvent["outcomeDeletion"]>} */ (
+              event.outcomeDeletion
+            ).purgeAtMs,
+          )
+        : undefined,
+      hostedOutcomePurged: outcomeState.purged,
+      hostedOutcomePurgedAt:
+        session?.outcomesPurgedAtMs !== null &&
+        session?.outcomesPurgedAtMs !== undefined
+          ? formatTimestamp(session.outcomesPurgedAtMs)
+          : undefined,
+      hostedOutcomePurgeFailed: event.outcomePurgeFailure !== null,
+      hostedOutcomePurgeFailureAttempts: event.outcomePurgeFailure
+        ? event.outcomePurgeFailure.attempts
+        : undefined,
+      hostedOutcomePurgeFailureLabel: purgeFailureLabel,
+      hostedOutcomeCanRequestDeletion: Boolean(
+        session &&
+          session.status === "closed" &&
+          session.archiveKey &&
+          !outcomeState.deletionPending &&
+          !outcomeState.purged,
+      ),
+      hostedOutcomeAuditHref: `organizers/${organizerId}/events/${event.eventId}/audit`,
 
       // Image export management.
       hostedEventExportJobs: exportJobs,
@@ -1094,6 +1240,15 @@ function createEventRoutes(dependencies) {
       });
       return;
     }
+    // A pending outcome deletion (or a purged session) freezes the publication
+    // surface: the archive is on its way out, so nothing new may derive from
+    // it and nothing may be published while the recoverable window runs.
+    if (outcomesInvalidated(managed.event, session)) {
+      await renderManageEvent(ctx, organizerId, managed.event, 409, {
+        errorKey: "hosted_outcome_error_state",
+      });
+      return;
+    }
     const audienceValue = form.get("audience") || "";
     const audience = ["organizer", "members", "link"].includes(audienceValue)
       ? /** @type {"organizer" | "members" | "link"} */ (audienceValue)
@@ -1222,6 +1377,293 @@ function createEventRoutes(dependencies) {
   }
 
   /**
+   * Requests early deletion of the event's outcomes. The request enters the
+   * recoverable window (7 days by default) and immediately invalidates the
+   * Published Canvas and every Image Export download link — through the read
+   * paths consulting the deletion record, not through deleting anything. The
+   * purge itself runs when the window elapses. Owner/Admin only.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOrganizerEventOutcomeDelete(ctx) {
+    if (ctx.request.method !== "POST") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const organizerId = ctx.params.organizerId || "";
+    const managed = requireManagedEvent(
+      ctx,
+      organizerId,
+      ctx.params.eventId || "",
+    );
+    if (!managed) return;
+    const form = await readFormBody(ctx.request);
+    if (!requestHasValidCsrf(ctx.request, form)) {
+      await renderManageEvent(ctx, organizerId, managed.event, 403, {
+        errorKey: "hosted_error_csrf",
+      });
+      return;
+    }
+    await advanceLifecycleNow();
+    const requested = await organizerStore.requestEventOutcomeDeletion({
+      eventId: managed.event.eventId,
+      actorAccountId: managed.account.accountId,
+      deleteWindowMs: Number(config.HOSTED_OUTCOME_DELETE_WINDOW_MS) || 0,
+    });
+    if (!requested.ok) {
+      if (requested.reason === "not_found") {
+        throw new BoundaryError(404, "event_not_found");
+      }
+      await renderManageEvent(ctx, organizerId, managed.event, 409, {
+        errorKey: "hosted_outcome_error_state",
+      });
+      return;
+    }
+    logger.info("hosted.event_outcome_delete_requested", {
+      organizer_id: organizerId,
+      event_id: managed.event.eventId,
+      purge_at_ms: requested.deletion.purgeAtMs,
+    });
+    await renderManageEvent(ctx, organizerId, managed.event, 200, {
+      noticeKey: "hosted_outcome_delete_requested",
+    });
+  }
+
+  /**
+   * Restores a pending outcome deletion inside its recoverable window. The
+   * request changed nothing physically, so every affected surface — archive,
+   * Published Canvas, export links — is consistent again immediately.
+   * Owner/Admin only.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOrganizerEventOutcomeRestore(ctx) {
+    if (ctx.request.method !== "POST") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const organizerId = ctx.params.organizerId || "";
+    const managed = requireManagedEvent(
+      ctx,
+      organizerId,
+      ctx.params.eventId || "",
+    );
+    if (!managed) return;
+    const form = await readFormBody(ctx.request);
+    if (!requestHasValidCsrf(ctx.request, form)) {
+      await renderManageEvent(ctx, organizerId, managed.event, 403, {
+        errorKey: "hosted_error_csrf",
+      });
+      return;
+    }
+    const restored = await organizerStore.restoreEventOutcomeDeletion({
+      eventId: managed.event.eventId,
+      actorAccountId: managed.account.accountId,
+    });
+    if (!restored.ok) {
+      await renderManageEvent(ctx, organizerId, managed.event, 409, {
+        errorKey: "hosted_outcome_error_state",
+      });
+      return;
+    }
+    logger.info("hosted.event_outcome_delete_restored", {
+      organizer_id: organizerId,
+      event_id: managed.event.eventId,
+    });
+    await renderManageEvent(ctx, organizerId, managed.event, 200, {
+      noticeKey: "hosted_outcome_delete_restored",
+    });
+  }
+
+  /**
+   * Renders the outcome-retention window state shared by the event console
+   * and the audit page.
+   *
+   * @param {HostedTemplate} template
+   * @param {HttpRouteContext} ctx
+   * @param {import("../organizers/store.mjs").StoredBoardSession | null} session
+   * @returns {{until?: string, daysLeft?: string, expired?: boolean, disabled?: boolean}}
+   */
+  function outcomeRetentionView(template, ctx, session) {
+    const retentionMs = Number(config.HOSTED_OUTCOME_RETENTION_MS) || 0;
+    if (
+      !session ||
+      session.archivedAtMs === null ||
+      session.outcomesPurgedAtMs !== null
+    ) {
+      return {};
+    }
+    if (retentionMs <= 0) {
+      return { disabled: true };
+    }
+    const deadlineMs = session.archivedAtMs + retentionMs;
+    return {
+      until: formatTimestamp(deadlineMs),
+      daysLeft: translate(template, ctx, "hosted_outcome_retention_days_left", {
+        days: String(
+          Math.max(0, Math.floor((deadlineMs - clock()) / 86400000)),
+        ),
+      }),
+      expired: clock() >= deadlineMs,
+    };
+  }
+
+  /**
+   * The Owner/Admin audit view of the event's outcomes: the Board Session and
+   * its retention deadline, the Board Item Attribution of the archived canvas,
+   * the recent Change Audit from the durable mutation ledger, and the event's
+   * administrative activity trail. Only Owner/Admins reach this page at all —
+   * Event Moderators and Participants keep their minimal surfaces — and
+   * internal Account ids are always projected to Participant Identifiers.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOrganizerEventAudit(ctx) {
+    if (ctx.request.method !== "GET") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const organizerId = ctx.params.organizerId || "";
+    const managed = requireManagedEvent(
+      ctx,
+      organizerId,
+      ctx.params.eventId || "",
+    );
+    if (!managed) return;
+    await advanceLifecycleNow();
+    const event =
+      organizerStore.getEventById(managed.event.eventId) || managed.event;
+    const template = templates.organizerEventAudit;
+    const lifecycle = eventLifecycleState(event, clock());
+    const sessions = organizerStore.listBoardSessionsForEvent(event.eventId);
+    const session = organizerStore.getBoardSessionForEvent(event.eventId);
+    const outcomeState = eventOutcomeState(event, session);
+    const retention = outcomeRetentionView(template, ctx, session);
+    const purgeFailureLabel = resolveOutcomePurgeFailureLabel(
+      event.outcomePurgeFailure,
+      translate,
+      template,
+      ctx,
+    );
+
+    // Board Item Attribution: counted from the Private Board Archive canvas,
+    // whose items carry every creator's server-stamped Participant Identifier.
+    const archived =
+      session && session.archiveKey && !outcomeState.purged
+        ? await readArchivedCanvas(session)
+        : null;
+    const attribution = archived
+      ? countStoredCanvasCreators(archived.canvas)
+      : [];
+
+    // Change Audit: the event's accepted board mutations, newest first, with
+    // the internal Account id projected to its Participant Identifier. The
+    // ledger read is console-only — never part of a socket or write path.
+    const ledger = createFileBoardMutationLedger({
+      boardName: event.boardName,
+      dataDir: config.HOSTED_DATA_DIR,
+    });
+    const ledgerEntries = archived ? await ledger.readEntriesAfter(0) : [];
+    const sessionIds = new Set(sessions.map((item) => item.boardSessionId));
+    const changeAudit = ledgerEntries
+      .filter((entry) => sessionIds.has(entry.boardSessionId))
+      .slice(-50)
+      .reverse()
+      .map((entry) => ({
+        seq: entry.seq,
+        createdAt: formatTimestamp(entry.acceptedAtMs),
+        actionLabel: translate(
+          template,
+          ctx,
+          MUTATION_LABEL_KEYS[
+            /** @type {keyof typeof MUTATION_LABEL_KEYS} */ (
+              /** @type {any} */ (entry.mutation).type
+            )
+          ] || "hosted_audit_mutation_unknown",
+        ),
+        participantId: participantIdentifierFor(event.eventId, entry.accountId),
+      }));
+
+    // Administrative activity: the event-scoped Change Audit records, with
+    // actor emails resolved for Owner/Admin eyes and system actors labeled.
+    const adminActivity = organizerStore
+      .listAuditForEvent(event.eventId, { limit: 50 })
+      .map((record) => {
+        const actor =
+          record.actorKind === "account"
+            ? accountStore.getAccountById(record.actorAccountId)
+            : null;
+        return {
+          actionLabel: translate(
+            template,
+            ctx,
+            EVENT_AUDIT_ACTION_KEYS[
+              /** @type {keyof typeof EVENT_AUDIT_ACTION_KEYS} */ (
+                record.action
+              )
+            ] || "hosted_event_audit_action_other",
+          ),
+          actorLabel:
+            record.actorKind === "system"
+              ? translate(template, ctx, "hosted_event_audit_actor_system")
+              : record.actorKind === "operator"
+                ? translate(template, ctx, "hosted_event_audit_actor_platform")
+                : actor
+                  ? actor.email
+                  : "",
+          createdAt: formatTimestamp(record.createdAtMs),
+        };
+      });
+
+    template.serveWithStatus(ctx.request, ctx.response, 200, {
+      hostedOrganizerId: organizerId,
+      hostedEventId: event.eventId,
+      hostedEventName: event.name,
+      hostedEventStatusLabel: translate(
+        template,
+        ctx,
+        EVENT_STATUS_KEYS[lifecycle],
+      ),
+      hostedEventStartsAt: formatTimestamp(event.startsAtMs),
+      hostedEventEndsAt: formatTimestamp(event.endsAtMs),
+      hostedEventManageHref: `organizers/${organizerId}/events/${event.eventId}`,
+      hostedEventSessionStatusLabel: session
+        ? translate(template, ctx, `hosted_session_status_${session.status}`)
+        : undefined,
+      hostedOutcomeDeletionPending: outcomeState.deletionPending,
+      hostedOutcomePurgeAt: outcomeState.deletionPending
+        ? formatTimestamp(
+            /** @type {NonNullable<import("../organizers/store.mjs").StoredEvent["outcomeDeletion"]>} */ (
+              event.outcomeDeletion
+            ).purgeAtMs,
+          )
+        : undefined,
+      hostedOutcomePurged: outcomeState.purged,
+      hostedOutcomePurgedAt:
+        session?.outcomesPurgedAtMs !== null &&
+        session?.outcomesPurgedAtMs !== undefined
+          ? formatTimestamp(session.outcomesPurgedAtMs)
+          : undefined,
+      hostedOutcomeRetentionUntil: retention.until,
+      hostedOutcomeRetentionDaysLeft: retention.daysLeft,
+      hostedOutcomeRetentionExpired: retention.expired,
+      hostedOutcomeRetentionDisabled: retention.disabled,
+      hostedOutcomePurgeFailed: event.outcomePurgeFailure !== null,
+      hostedOutcomePurgeFailureAttempts: event.outcomePurgeFailure
+        ? event.outcomePurgeFailure.attempts
+        : undefined,
+      hostedOutcomePurgeFailureLabel: purgeFailureLabel,
+      hostedAuditHasAttribution: attribution.length > 0,
+      hostedAuditAttribution: attribution,
+      hostedAuditHasChangeRecords: changeAudit.length > 0,
+      hostedAuditChangeRecords: changeAudit,
+      hostedAuditHasAdminActivity: adminActivity.length > 0,
+      hostedAuditAdminActivity: adminActivity,
+      csrfToken: ensureCsrfToken(ctx),
+    });
+  }
+
+  /**
    * Whether the current viewer passes the publication's Publication Audience.
    * The organizer and members audiences resolve the signed-in viewer through
    * the shared admission definition; the link audience requires the
@@ -1281,7 +1723,10 @@ function createEventRoutes(dependencies) {
       !session ||
       !publication ||
       publication.status !== "published" ||
-      !viewerPassesPublicationAudience(ctx, event, publication)
+      !viewerPassesPublicationAudience(ctx, event, publication) ||
+      // A pending outcome deletion or a purged session stops every audience
+      // immediately, exactly like a withdrawal — the canvas is on its way out.
+      outcomesInvalidated(event, session)
     ) {
       throw new BoundaryError(404, "published_canvas_not_found");
     }
@@ -1453,6 +1898,12 @@ function createEventRoutes(dependencies) {
     const session = organizerStore.getBoardSessionForEvent(
       managed.event.eventId,
     );
+    if (outcomesInvalidated(managed.event, session)) {
+      await renderManageEvent(ctx, organizerId, managed.event, 409, {
+        errorKey: "hosted_outcome_error_state",
+      });
+      return;
+    }
     const requested = await exportPipeline.requestExport({
       boardSessionId: session?.boardSessionId || "",
       eventId: managed.event.eventId,
@@ -1501,6 +1952,16 @@ function createEventRoutes(dependencies) {
     );
     if (!managed) return;
     const exportId = ctx.params.exportId || "";
+    // A pending outcome deletion or a purged session kills every download
+    // link immediately, on top of the token, revocation, and expiry checks.
+    if (
+      outcomesInvalidated(
+        managed.event,
+        organizerStore.getBoardSessionForEvent(managed.event.eventId),
+      )
+    ) {
+      throw new BoundaryError(404, "export_not_found");
+    }
     const verdict = exportStore.verifyExportDownloadToken({
       exportId,
       token: ctx.url.searchParams.get("token") || "",
@@ -1747,6 +2208,9 @@ function createEventRoutes(dependencies) {
     serveOrganizerEventCover,
     serveOrganizerEventPublication,
     serveOrganizerEventPublicationRevoke,
+    serveOrganizerEventOutcomeDelete,
+    serveOrganizerEventOutcomeRestore,
+    serveOrganizerEventAudit,
     servePublishedCanvas,
 
     serveOrganizerEventExports,

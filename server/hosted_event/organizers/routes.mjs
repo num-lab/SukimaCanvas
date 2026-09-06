@@ -10,6 +10,7 @@ import {
   seeOther,
   translate,
 } from "../http_forms.mjs";
+import { resolveOutcomePurgeFailureLabel } from "../outcomes.mjs";
 
 const { logger } = observability;
 
@@ -430,12 +431,40 @@ function createOrganizerRoutes(dependencies) {
             : "",
         };
       });
+    // The outcome-purge work list: events with a pending early deletion or a
+    // failed retention purge. The failure detail is operator-console material
+    // and never renders on organizer or participant surfaces.
+    const outcomePurges = organizerStore.listOutcomePurgeWork().map((item) => {
+      const failure = item.event.outcomePurgeFailure;
+      const failureCode = failure
+        ? resolveOutcomePurgeFailureLabel(failure, translate, template, ctx)
+        : "";
+      const organizer = organizerStore.getOrganizerById(item.event.organizerId);
+      return {
+        eventId: item.event.eventId,
+        eventName: item.event.name,
+        organizerName: organizer ? organizer.name : "",
+        deletionPending:
+          item.deletion !== null && item.deletion.purgedAtMs === null,
+        purgeAt: item.deletion
+          ? formatTimestamp(language, item.deletion.purgeAtMs)
+          : "",
+        failureCode,
+        failureMessage: failure ? failure.message : "",
+        failureAttempts: failure ? failure.attempts : 0,
+        lastFailedAt: failure
+          ? formatTimestamp(language, failure.lastFailedAtMs)
+          : "",
+      };
+    });
     template.serveWithStatus(ctx.request, ctx.response, statusCode, {
       hostedOperatorPending: pending,
       hostedOperatorPendingCount: pending.length,
       hostedOperatorHasPending: pending.length > 0,
       hostedOperatorArchiveFailures: archiveFailures,
       hostedOperatorHasArchiveFailures: archiveFailures.length > 0,
+      hostedOperatorOutcomePurges: outcomePurges,
+      hostedOperatorHasOutcomePurges: outcomePurges.length > 0,
       hostedOperatorArchiveNotice: state.noticeKey
         ? translate(template, ctx, state.noticeKey)
         : undefined,
@@ -509,6 +538,60 @@ function createOrganizerRoutes(dependencies) {
         outcome && outcome.status === "closed"
           ? "hosted_operator_archive_retry_completed"
           : "hosted_operator_archive_retry_failed",
+    });
+  }
+
+  /**
+   * A Platform Operator's authorized outcome-purge retry: clears the event's
+   * durable purge-failure context so the very next retention pass attempts
+   * the purge again, and runs one lifecycle pass now so the re-rendered
+   * console shows the outcome. Guarded by the store (an event without a
+   * failure context is refused), so double submissions and racing operators
+   * are deterministic notices, never duplicate purges.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOperatorOutcomePurgeRetry(ctx) {
+    if (ctx.request.method !== "POST") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const operator = requireOperator(ctx);
+    if (!operator) return;
+    const eventId = ctx.params.eventId || "";
+    if (!organizerStore.getEventById(eventId)) {
+      throw new BoundaryError(404, "event_not_found");
+    }
+    const form = await readFormBody(ctx.request);
+    if (!requestHasValidCsrf(ctx.request, form)) {
+      renderOperatorConsole(ctx, 403, { noticeKey: "hosted_error_csrf" });
+      return;
+    }
+    const retry = await organizerStore.retryEventOutcomePurge({
+      eventId,
+      operatorAccountId: operator.accountId,
+    });
+    if (!retry.ok) {
+      renderOperatorConsole(ctx, 409, {
+        noticeKey: "hosted_operator_outcome_purge_retry_error_state",
+      });
+      return;
+    }
+    logger.info("hosted.event_outcome_purge_retry_requested", {
+      operator_account_id: operator.accountId,
+      event: eventId,
+    });
+    if (typeof advanceEventLifecycle === "function") {
+      // Run the retention pass now: the retried event is due immediately, and
+      // the console's work list reflects the attempt's outcome.
+      await advanceEventLifecycle();
+    }
+    const event = organizerStore.getEventById(eventId);
+    renderOperatorConsole(ctx, 200, {
+      noticeKey:
+        event && event.outcomeDeletion && event.outcomeDeletion.purgedAtMs
+          ? "hosted_operator_outcome_purge_completed"
+          : "hosted_operator_outcome_purge_failed",
     });
   }
 
@@ -1314,6 +1397,7 @@ function createOrganizerRoutes(dependencies) {
     serveOrganizerApply,
     serveOperatorConsole,
     serveOperatorArchiveRetry,
+    serveOperatorOutcomePurgeRetry,
     serveOperatorApplication,
     serveOperatorApproveApplication,
     serveOperatorRejectApplication,

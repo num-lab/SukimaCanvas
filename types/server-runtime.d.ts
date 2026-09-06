@@ -60,11 +60,13 @@ export type HostedEventModule = {
   serveReset: HttpRouteHandler;
   serveAccount: HttpRouteHandler;
   serveAccountPassword: HttpRouteHandler;
+  serveAccountDelete: HttpRouteHandler;
   serveAccountSessionRevoke: HttpRouteHandler;
   serveAccountSessionsRevokeOthers: HttpRouteHandler;
   serveOrganizerApply: HttpRouteHandler;
   serveOperatorConsole: HttpRouteHandler;
   serveOperatorArchiveRetry: HttpRouteHandler;
+  serveOperatorOutcomePurgeRetry: HttpRouteHandler;
   serveOperatorApplication: HttpRouteHandler;
   serveOperatorApproveApplication: HttpRouteHandler;
   serveOperatorRejectApplication: HttpRouteHandler;
@@ -117,6 +119,9 @@ export type HostedEventModule = {
   serveOrganizerEventCover: HttpRouteHandler;
   serveOrganizerEventPublication: HttpRouteHandler;
   serveOrganizerEventPublicationRevoke: HttpRouteHandler;
+  serveOrganizerEventOutcomeDelete: HttpRouteHandler;
+  serveOrganizerEventOutcomeRestore: HttpRouteHandler;
+  serveOrganizerEventAudit: HttpRouteHandler;
   servePublishedCanvas: HttpRouteHandler;
   serveOrganizerEventExports: HttpRouteHandler;
   serveOrganizerEventExportDownload: HttpRouteHandler;

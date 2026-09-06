@@ -7,7 +7,7 @@ import { serveError } from "../http/observation.mjs";
  * concept, so each route rejects with a deterministic 404 instead of falling
  * through to static file resolution.
  *
- * @param {keyof Pick<HostedEventModule, "serveRegister" | "serveLogin" | "serveVerify" | "serveLogout" | "serveForgot" | "serveReset" | "serveAccount" | "serveAccountPassword" | "serveAccountSessionRevoke" | "serveAccountSessionsRevokeOthers" | "serveOrganizerApply" | "serveOperatorConsole" | "serveOperatorArchiveRetry" | "serveOperatorApplication" | "serveOperatorApproveApplication" | "serveOperatorRejectApplication" | "serveOrganizerConsole" | "serveOrganizerInvitationAccept" | "serveOrganizerInvitationDecline" | "serveOrganizerManage" | "serveOrganizerInvite" | "serveOrganizerInvitationRevoke" | "serveOrganizerMemberRole" | "serveOrganizerMemberRemove" | "serveOrganizerReservations" | "serveOrganizerReservation" | "serveSubmitReservation" | "serveCancelReservation" | "serveSubmitChangeRequest" | "serveOperatorReservations" | "serveOperatorReservation" | "serveOperatorApproveReservation" | "serveOperatorRejectReservation" | "serveOperatorChanges" | "serveOperatorChange" | "serveOperatorApproveChange" | "serveOperatorRejectChange" | "serveEventPage" | "serveEventEnter" | "serveEventAnonymity" | "serveBrandAsset" | "serveOrganizerEvent" | "serveOrganizerEventAccessCode" | "serveOrganizerEventEntryLock" | "serveOrganizerEventModerators" | "serveOrganizerEventModeratorRevoke" | "serveOrganizerEventCover" | "serveOrganizerEventPublication" | "serveOrganizerEventPublicationRevoke" | "servePublishedCanvas" | "serveOrganizerEventExports" | "serveOrganizerEventExportDownload" | "serveOrganizerEventExportRevoke" | "serveOrganizerEventExportDelete" | "serveOrganizerCredentialCreate" | "serveOrganizerCredentialRotate" | "serveOrganizerCredentialRevoke" | "serveEventEntryGrantRedeem" | "serveIntegrationApiEvent" | "serveIntegrationApiEntryGrantCreate">} handlerName
+ * @param {keyof Pick<HostedEventModule, "serveRegister" | "serveLogin" | "serveVerify" | "serveLogout" | "serveForgot" | "serveReset" | "serveAccount" | "serveAccountPassword" | "serveAccountDelete" | "serveAccountSessionRevoke" | "serveAccountSessionsRevokeOthers" | "serveOrganizerApply" | "serveOperatorConsole" | "serveOperatorArchiveRetry" | "serveOperatorOutcomePurgeRetry" | "serveOperatorApplication" | "serveOperatorApproveApplication" | "serveOperatorRejectApplication" | "serveOrganizerConsole" | "serveOrganizerInvitationAccept" | "serveOrganizerInvitationDecline" | "serveOrganizerManage" | "serveOrganizerInvite" | "serveOrganizerInvitationRevoke" | "serveOrganizerMemberRole" | "serveOrganizerMemberRemove" | "serveOrganizerReservations" | "serveOrganizerReservation" | "serveSubmitReservation" | "serveCancelReservation" | "serveSubmitChangeRequest" | "serveOperatorReservations" | "serveOperatorReservation" | "serveOperatorApproveReservation" | "serveOperatorRejectReservation" | "serveOperatorChanges" | "serveOperatorChange" | "serveOperatorApproveChange" | "serveOperatorRejectChange" | "serveEventPage" | "serveEventEnter" | "serveEventAnonymity" | "serveBrandAsset" | "serveOrganizerEvent" | "serveOrganizerEventAccessCode" | "serveOrganizerEventEntryLock" | "serveOrganizerEventModerators" | "serveOrganizerEventModeratorRevoke" | "serveOrganizerEventCover" | "serveOrganizerEventPublication" | "serveOrganizerEventPublicationRevoke" | "serveOrganizerEventOutcomeDelete" | "serveOrganizerEventOutcomeRestore" | "serveOrganizerEventAudit" | "servePublishedCanvas" | "serveOrganizerEventExports" | "serveOrganizerEventExportDownload" | "serveOrganizerEventExportRevoke" | "serveOrganizerEventExportDelete" | "serveOrganizerCredentialCreate" | "serveOrganizerCredentialRotate" | "serveOrganizerCredentialRevoke" | "serveEventEntryGrantRedeem" | "serveIntegrationApiEvent" | "serveIntegrationApiEntryGrantCreate">} handlerName
  * @returns {import("../../types/server-runtime.d.ts").HttpRouteHandler}
  */
 function serveHostedAccountPage(handlerName) {
@@ -36,6 +36,7 @@ export const serveAccount = serveHostedAccountPage("serveAccount");
 export const serveAccountPassword = serveHostedAccountPage(
   "serveAccountPassword",
 );
+export const serveAccountDelete = serveHostedAccountPage("serveAccountDelete");
 export const serveAccountSessionRevoke = serveHostedAccountPage(
   "serveAccountSessionRevoke",
 );
@@ -50,6 +51,9 @@ export const serveOperatorConsole = serveHostedAccountPage(
 );
 export const serveOperatorArchiveRetry = serveHostedAccountPage(
   "serveOperatorArchiveRetry",
+);
+export const serveOperatorOutcomePurgeRetry = serveHostedAccountPage(
+  "serveOperatorOutcomePurgeRetry",
 );
 export const serveOperatorApplication = serveHostedAccountPage(
   "serveOperatorApplication",
@@ -152,6 +156,15 @@ export const serveOrganizerEventPublication = serveHostedAccountPage(
 );
 export const serveOrganizerEventPublicationRevoke = serveHostedAccountPage(
   "serveOrganizerEventPublicationRevoke",
+);
+export const serveOrganizerEventOutcomeDelete = serveHostedAccountPage(
+  "serveOrganizerEventOutcomeDelete",
+);
+export const serveOrganizerEventOutcomeRestore = serveHostedAccountPage(
+  "serveOrganizerEventOutcomeRestore",
+);
+export const serveOrganizerEventAudit = serveHostedAccountPage(
+  "serveOrganizerEventAudit",
 );
 export const servePublishedCanvas = serveHostedAccountPage(
   "servePublishedCanvas",

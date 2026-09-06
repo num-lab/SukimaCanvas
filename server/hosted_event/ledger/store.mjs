@@ -258,4 +258,38 @@ function createFileBoardMutationLedger(dependencies) {
   return { appendEntries, readEntriesAfter };
 }
 
-export { createFileBoardMutationLedger, LEDGER_CORRUPT_ERROR_CODE };
+/**
+ * Removes a board's durable ledger file, the Change Audit boundary of a Board
+ * Session, when the outcome-retention pipeline purges the event's outcomes.
+ * Refuses unsafe board names exactly like the adapter constructor; a missing
+ * file is already gone, so the delete is a no-op success and a purge that
+ * crashed mid-way replays idempotently. An adapter instance that still holds
+ * an open append handle keeps it: sealed sessions refuse writes, so a deleted
+ * file is never re-created by a live append.
+ *
+ * @param {{
+ *   boardName: string,
+ *   dataDir: string,
+ * }} dependencies
+ * @returns {Promise<void>}
+ */
+async function deleteBoardMutationLedgerFile(dependencies) {
+  const boardName = String(dependencies.boardName || "");
+  if (!/^[A-Za-z0-9_-]+$/.test(boardName)) {
+    throw new Error(
+      `Refusing ledger deletion for unsafe board name: ${boardName}`,
+    );
+  }
+  const ledgerPath = path.join(
+    dependencies.dataDir,
+    "mutation-ledger",
+    `${boardName}.jsonl`,
+  );
+  await fs.promises.rm(ledgerPath, { force: true });
+}
+
+export {
+  createFileBoardMutationLedger,
+  deleteBoardMutationLedgerFile,
+  LEDGER_CORRUPT_ERROR_CODE,
+};

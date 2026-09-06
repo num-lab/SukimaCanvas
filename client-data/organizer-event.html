@@ -46,6 +46,8 @@
           <a href="organizers/{{hostedOrganizerId}}/reservations/{{hostedEventReservationId}}">{{hostedTranslations.hosted_event_manage_back}}</a>
           ·
           <a href="{{hostedEventPublicHref}}">{{hostedTranslations.hosted_event_view_public}}</a>
+          ·
+          <a href="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/audit">{{hostedTranslations.hosted_outcome_audit_link}}</a>
         </p>
 
         {{#if hostedEventManageError}}
@@ -273,6 +275,45 @@
           <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_export_request}}</button>
         </form>
         <p class="hosted-form-hint">{{hostedTranslations.hosted_export_request_hint}}</p>
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_outcome_title}}</h2>
+        {{#if hostedOutcomeDeletionPending}}
+        <p class="hosted-form-error" role="status">
+          {{hostedTranslations.hosted_outcome_deletion_pending_note}} {{hostedOutcomePurgeAt}}
+        </p>
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/outcomes/restore" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_outcome_restore}}</button>
+        </form>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_outcome_restore_hint}}</p>
+        {{else if hostedOutcomePurged}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_outcome_purged_note}} {{hostedOutcomePurgedAt}}</p>
+        {{else if hostedOutcomeArchived}}
+        <p class="hosted-account-note">
+          {{hostedTranslations.hosted_outcome_retention_note}} {{hostedOutcomeRetentionUntil}}
+          {{#if hostedOutcomeRetentionDaysLeft}}({{hostedOutcomeRetentionDaysLeft}}){{/if}}
+        </p>
+        {{#if hostedOutcomeRetentionExpired}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_outcome_retention_expired_note}}</p>
+        {{/if}}
+        {{#if hostedOutcomeRetentionDisabled}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_outcome_retention_disabled_note}}</p>
+        {{/if}}
+        {{#if hostedOutcomePurgeFailed}}
+        <p class="hosted-form-error" role="alert">
+          {{hostedTranslations.hosted_outcome_purge_failed_note}} {{hostedOutcomePurgeFailureLabel}} ({{hostedOutcomePurgeFailureAttempts}})
+        </p>
+        {{/if}}
+        {{#if hostedOutcomeCanRequestDeletion}}
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/outcomes/delete" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <button type="submit" class="hosted-submit hosted-submit-danger">{{hostedTranslations.hosted_outcome_delete_request}}</button>
+        </form>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_outcome_delete_request_hint}}</p>
+        {{/if}}
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_outcome_requires_archive_note}}</p>
+        {{/if}}
 
         <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_event_cover_label}}</h2>
         {{#if hostedEventHasCover}}

@@ -491,6 +491,49 @@ requires an authorized Owner/Admin session plus an HMAC-derived token; links
 are valid for `WBO_HOSTED_BOARD_EXPORT_LINK_TTL_MS` (24 h) and die immediately
 on revoke or delete.
 
+Outcome retention, early deletion, and expiry purge live under
+[hosted_event/outcomes.mjs](./server/hosted_event/outcomes.mjs): a sealed
+Board Session's Private Board Archive, the Item Attribution inside its canvas,
+its Change Audit (the durable mutation ledger file), the event's Published
+Canvas, and its Board Image Export objects are retained for
+`WBO_HOSTED_OUTCOME_RETENTION_MS` (90 days from the archive seal, `0`
+disables expiry purges) and then purged together by one idempotent,
+event-isolated pass on the lifecycle-poker cadence. An Owner/Admin can request
+early deletion from the event console (POST
+`/organizers/{organizerId}/events/{eventId}/outcomes/delete`); the request
+enters the `WBO_HOSTED_OUTCOME_DELETE_WINDOW_MS` recoverable window (7 days)
+and immediately invalidates the Published Canvas and every export download
+link by consulting the durable deletion record on every read — nothing is
+deleted yet — while POST `.../outcomes/restore` inside the window removes the
+request and every surface is consistent again by construction. The purge
+deletes outcome objects first and stamps durable markers last
+(`outcomesPurgedAtMs` per session, `purgedAtMs` on the event's deletion
+record), so an interrupted purge replays as a no-op; failures record a
+durable context on the event, stay visible on the organizer event console and
+the operator console, retry after `WBO_HOSTED_OUTCOME_PURGE_RETRY_MS`, and can
+be retried immediately by a Platform Operator (POST
+`/operator/events/{eventId}/outcome-purge-retry`). Moderation-log and
+organizer Change Audit records are governance/accountability data and are not
+part of the outcome purge. The Owner/Admin audit view
+(`GET /organizers/{organizerId}/events/{eventId}/audit`) renders the
+retention deadline from the service clock, the Board Item Attribution counted
+from the archived canvas, the recent accepted board mutations from the ledger
+with internal Account ids projected to Participant Identifiers, and the
+event-scoped administrative activity; Event Moderators and Participants have
+no console access at all.
+
+Account deregistration is owned by
+[hosted_event/accounts/store.mjs](./server/hosted_event/accounts/store.mjs):
+`deleteAccount` irreversibly pseudonymizes the account (the email is replaced
+by a random `deleted-<hex>@sukimacanvas.invalid` placeholder that no one can
+map back, the password hash is dropped, status becomes the terminal
+`deleted`), revokes every session, and consumes outstanding verification and
+reset tokens. The internal Account id is kept on purpose so the mutation
+ledger, moderation log, and organizer Change Audit stay accountable; public
+attribution was already an opaque event-scoped Participant Identifier and is
+unchanged. The flow runs through POST `/account/delete` (password re-proof +
+CSRF) and lands on `/login?deleted=1`.
+
 ### tests, benchmarks, and profiling
 
 Use [test-node](./test-node) for Node tests and
@@ -755,7 +798,7 @@ Important files:
   error. Do not turn structural failures into silent repairs.
 - Board pages stream stored SVG baselines through the HTML shell. The board chrome
   and boot payloads must remain before the streamed board markup.
-- All user-visible strings MUST be localized via `Tools.i18n`. All [translation keys](server/http/translations.json) MUST have a carefully designed, natural sounding, context-aware version in ALL supported languages.
+- All user-visible strings MUST be localized via `Tools.i18n`. All [translation keys](server/http/translations.json) MUST have a carefully designed, natural sounding, context-aware version in `en`, `zh-CN`, and `ja`; Hosted Event pages additionally render only `en` and `zh-CN` (see `HOSTED_LANGUAGES`). Legacy board keys must keep their existing coverage in the other supported languages; do not drop existing translations.
 - The shared moderation rule list lives in [client-data/js/moderation_rules.js](./client-data/js/moderation_rules.js). It defines rule identity, icon files, translation key references, and the moderation-appeal URL. Rule SVG icons live in [client-data/rules/](./client-data/rules/). The `/rules` page, the moderation-action dialog, and the banned disconnect notice all read metadata from this single source.
 
 ## hot paths

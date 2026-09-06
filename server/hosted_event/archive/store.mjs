@@ -8,14 +8,20 @@ import path from "node:path";
  * This is the first production adapter behind the archive storage contract:
  * objects live as files under `<WBO_HOSTED_DATA_DIR>/board-archives/<key>`, so
  * an S3-compatible adapter can replace it without touching the close
- * pipeline. The contract is deliberately small — put and read — because
- * archives are write-once results that only the platform's own authorized
+ * pipeline. The contract is deliberately small — put, read, list, delete.
+ * Archives are write-once results that only the platform's own authorized
  * surfaces ever consume.
  *
  * Immutability contract: the content stored under a key can never change. A
  * put against an existing key with different content is refused; re-putting
  * byte-identical content is a no-op success, so a close attempt that crashed
  * between the archive writes and the lifecycle seal can retry safely.
+ *
+ * Deletion is reserved for the outcome-retention pipeline: when a Board
+ * Session's 90-day retention window has elapsed (or an Owner/Admin's early
+ * deletion request survived its recovery window), the whole key namespace of
+ * that Board Session is removed. No other surface ever deletes, so the
+ * write-once behavior of the close and publication paths is untouched.
  *
  * Keys are internal identifiers, never public access credentials: nothing
  * serves this directory over HTTP, public URLs carry only Event Public IDs,
@@ -63,6 +69,8 @@ function assertSafeArchiveKey(key) {
  * @returns {{
  *   putArchive: (key: string, content: string | Uint8Array) => Promise<void>,
  *   readArchive: (key: string) => Promise<Buffer | null>,
+ *   listObjectKeys: (prefix: string) => Promise<string[]>,
+ *   deleteObject: (key: string) => Promise<void>,
  * }}
  */
 function createFileBoardArchiveStore(dependencies) {
@@ -119,7 +127,62 @@ function createFileBoardArchiveStore(dependencies) {
     }
   }
 
-  return { putArchive, readArchive };
+  /**
+   * Lists every object key under a key prefix, oldest-first within the
+   * deterministic walk order of the adapter. Used by the outcome-retention
+   * pipeline to enumerate a Board Session's whole namespace (archive objects
+   * plus every Published Canvas generation) before deleting it. A missing
+   * prefix directory simply lists nothing.
+   *
+   * @param {string} prefix
+   * @returns {Promise<string[]>}
+   */
+  async function listObjectKeys(prefix) {
+    assertSafeArchiveKey(prefix.endsWith("/") ? prefix.slice(0, -1) : prefix);
+    /** @type {string[]} */
+    const keys = [];
+    /**
+     * @param {string} relative
+     * @returns {Promise<void>}
+     */
+    async function walk(relative) {
+      const entries = await fsp
+        .readdir(path.join(root, relative), { withFileTypes: true })
+        .catch((error) => {
+          if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") {
+            return [];
+          }
+          throw error;
+        });
+      for (const entry of entries) {
+        const child =
+          relative === "" ? entry.name : `${relative}/${entry.name}`;
+        if (entry.isDirectory()) {
+          await walk(child);
+        } else {
+          keys.push(child);
+        }
+      }
+    }
+    await walk("");
+    const normalized = prefix.endsWith("/") ? prefix : `${prefix}/`;
+    return keys.filter((key) => key.startsWith(normalized)).sort();
+  }
+
+  /**
+   * Deletes one archive object. Missing objects are already gone, so the
+   * delete is a no-op success — a purge that crashed mid-way can replay
+   * idempotently.
+   *
+   * @param {string} key
+   * @returns {Promise<void>}
+   */
+  async function deleteObject(key) {
+    assertSafeArchiveKey(key);
+    await fsp.rm(path.join(root, key), { force: true });
+  }
+
+  return { putArchive, readArchive, listObjectKeys, deleteObject };
 }
 
 export { createFileBoardArchiveStore };

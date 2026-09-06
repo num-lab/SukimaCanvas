@@ -14,9 +14,9 @@ import { createBoardArchivePipeline } from "./archive/close.mjs";
 import { createFileBoardArchiveStore } from "./archive/store.mjs";
 import { createFileBrandAssetStore } from "./assets/store.mjs";
 import { createParticipantIdentifierResolver } from "./attribution.mjs";
+import { createEventRoutes } from "./events/routes.mjs";
 import { createBoardExportPipeline } from "./export/pipeline.mjs";
 import { createFileBoardExportStore } from "./export/store.mjs";
-import { createEventRoutes } from "./events/routes.mjs";
 import { createIntegrationRoutes } from "./integrations/routes.mjs";
 import { createFileIntegrationStore } from "./integrations/store.mjs";
 import { createFileBoardMutationLedger } from "./ledger/store.mjs";
@@ -25,6 +25,7 @@ import { createEventModeration } from "./moderation/index.mjs";
 import { createFileModerationStore } from "./moderation/store.mjs";
 import { createOrganizerRoutes } from "./organizers/routes.mjs";
 import { createFileOrganizerStore } from "./organizers/store.mjs";
+import { createOutcomeRetentionPipeline } from "./outcomes.mjs";
 import { createFilePublicationStore } from "./publication/store.mjs";
 import { createReservationRoutes } from "./reservations/routes.mjs";
 
@@ -144,6 +145,7 @@ class HostedPageTemplate extends Template {
  *   operatorChangeTemplatePath: string,
  *   eventTemplatePath: string,
  *   organizerEventTemplatePath: string,
+ *   organizerEventAuditTemplatePath: string,
  *   publishedCanvasTemplatePath: string,
  *   htmlHeadSnippet?: string,
  * }} paths
@@ -255,6 +257,18 @@ function createHostedEventModule(config, paths) {
     config,
     clock,
   });
+  // Outcome retention: Private Board Archive, Item Attribution, Change Audit,
+  // Published Canvas, and Board Image Export objects are purged together when
+  // their retention window elapses or an early deletion's recovery window
+  // runs out. Failures stay durable, visible, and retryable.
+  const outcomeRetentionPipeline = createOutcomeRetentionPipeline({
+    organizerStore,
+    archiveStore,
+    publicationStore,
+    exportStore,
+    config,
+    clock,
+  });
   const serviceClock = clock || (() => Date.now());
   const closeDrainMs = config.HOSTED_BOARD_SESSION_CLOSE_DRAIN_MS;
   /**
@@ -275,6 +289,7 @@ function createHostedEventModule(config, paths) {
     const now = serviceClock();
     await organizerStore.advanceLifecycle({ now, closeDrainMs });
     await boardArchivePipeline.runDueCloses({ now, closeDrainMs });
+    await outcomeRetentionPipeline.runDueOutcomePurges({ now });
     boardExportPipeline.runDueExports({ now }).catch((error) => {
       logger.error("hosted.board_export_pass_failed", { error });
     });
@@ -479,6 +494,11 @@ function createHostedEventModule(config, paths) {
         config,
         templateOptions,
       ),
+      organizerEventAudit: new HostedPageTemplate(
+        paths.organizerEventAuditTemplatePath,
+        config,
+        templateOptions,
+      ),
       publishedCanvas: new HostedPageTemplate(
         paths.publishedCanvasTemplatePath,
         config,
@@ -565,6 +585,11 @@ function createHostedEventModule(config, paths) {
     serveOrganizerEventPublication: eventRoutes.serveOrganizerEventPublication,
     serveOrganizerEventPublicationRevoke:
       eventRoutes.serveOrganizerEventPublicationRevoke,
+    serveOrganizerEventOutcomeDelete:
+      eventRoutes.serveOrganizerEventOutcomeDelete,
+    serveOrganizerEventOutcomeRestore:
+      eventRoutes.serveOrganizerEventOutcomeRestore,
+    serveOrganizerEventAudit: eventRoutes.serveOrganizerEventAudit,
     servePublishedCanvas: eventRoutes.servePublishedCanvas,
 
     serveOrganizerEventExports: eventRoutes.serveOrganizerEventExports,

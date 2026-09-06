@@ -307,6 +307,43 @@ export const HOSTED_BOARD_EXPORT_RETRY_MS = parseIntegerEnv(
   15 * 60 * 1000,
 );
 
+/**
+ * How long a closed Board Session's outcomes — its Private Board Archive, the
+ * Item Attribution inside it, and its Change Audit (the durable mutation
+ * ledger) — are retained after the archive was sealed. When the window
+ * elapses the retention pipeline purges them together with the event's
+ * Published Canvas and Board Image Export objects. The organizer console
+ * renders the deadline from the server-authoritative clock. `0` disables the
+ * automatic expiry purge.
+ */
+export const HOSTED_OUTCOME_RETENTION_MS = parseIntegerEnv(
+  "WBO_HOSTED_OUTCOME_RETENTION_MS",
+  90 * 24 * 60 * 60 * 1000,
+);
+
+/**
+ * Recoverable window after an Owner/Admin requests early deletion of an
+ * event's outcomes. The request immediately invalidates the Published Canvas
+ * and every Image Export download link; when the window elapses the purge
+ * runs. Restoring the deletion inside the window puts every affected surface
+ * back exactly as it was. `0` purges on the next lifecycle pass.
+ */
+export const HOSTED_OUTCOME_DELETE_WINDOW_MS = parseIntegerEnv(
+  "WBO_HOSTED_OUTCOME_DELETE_WINDOW_MS",
+  7 * 24 * 60 * 60 * 1000,
+);
+
+/**
+ * Backoff between automatic retries of a failed outcome purge. The failure
+ * stays observable on the organizer event console and the operator console,
+ * and a Platform Operator can retry immediately. `0` retries on the next
+ * lifecycle pass.
+ */
+export const HOSTED_OUTCOME_PURGE_RETRY_MS = parseIntegerEnv(
+  "WBO_HOSTED_OUTCOME_PURGE_RETRY_MS",
+  15 * 60 * 1000,
+);
+
 /** Capacity window buffer added before a reservation's start and after its end. */
 export const HOSTED_CAPACITY_WINDOW_BUFFER_MS = parseIntegerEnv(
   "WBO_HOSTED_CAPACITY_WINDOW_BUFFER_MS",

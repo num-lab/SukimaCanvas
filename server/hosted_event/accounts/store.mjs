@@ -1,9 +1,8 @@
+import crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import crypto from "node:crypto";
-
-import { isValidNormalizedEmail, normalizeEmail } from "./emails.mjs";
 import observability from "../../observability/index.mjs";
+import { isValidNormalizedEmail, normalizeEmail } from "./emails.mjs";
 
 const { logger } = observability;
 
@@ -20,11 +19,18 @@ function randomPublicId() {
 }
 
 /**
+ * A deregistered account keeps its internal id (so durable security audit —
+ * the mutation ledger, moderation log, and organizer Change Audit — stays
+ * accountable) but its identity is irreversibly pseudonymized: the email is
+ * replaced by a random placeholder no one can map back, and the password
+ * hash is dropped. The holder can never sign in again, and public attribution
+ * was already an opaque event-scoped Participant Identifier.
+ *
  * @typedef {{
  *   accountId: string,
  *   email: string,
  *   passwordHash: string,
- *   status: "active" | "disabled",
+ *   status: "active" | "disabled" | "deleted",
  *   verifiedAtMs: number | null,
  *   createdAtMs: number,
  * }} StoredAccount
@@ -125,6 +131,18 @@ function createSingleUseTokenTable(options) {
       for (const [tokenDigest, token] of tokensByDigest) {
         if (token.expiresAtMs <= now) forget(tokenDigest, token.accountId);
       }
+    },
+
+    /**
+     * Drops any outstanding token of the account, so a deregistration also
+     * kills its verification and password-reset capabilities.
+     *
+     * @param {string} accountId
+     * @returns {void}
+     */
+    revokeForAccount(accountId) {
+      const tokenDigest = digestsByAccountId.get(accountId);
+      if (tokenDigest !== undefined) forget(tokenDigest, accountId);
     },
 
     /**
@@ -418,7 +436,7 @@ function createFileAccountStore(options) {
 
   /**
    * @param {string} accountId
-   * @param {"active" | "disabled"} status
+   * @param {"active" | "disabled" | "deleted"} status
    * @returns {Promise<void>}
    */
   async function setAccountStatus(accountId, status) {
@@ -426,8 +444,47 @@ function createFileAccountStore(options) {
     const account = accountsById.get(accountId);
     if (!account) throw new Error(`unknown account: ${accountId}`);
     account.status = status;
-    if (status === "disabled") await revokeAccountSessions(accountId);
+    if (status !== "active") await revokeAccountSessions(accountId);
     await enqueueWrite(persistNow);
+  }
+
+  /**
+   * Irreversibly pseudonymizes an account (deregistration): the email is
+   * replaced by a random placeholder that cannot be mapped back to the
+   * holder — not by the platform, not by whoever later reads the store — and
+   * the password hash is dropped. Sessions and outstanding verification or
+   * reset tokens are revoked, and the terminal `deleted` status keeps every
+   * sign-in path refusing. The internal account id is kept on purpose:
+   * durable security audit (the mutation ledger, the moderation log, and the
+   * organizer Change Audit) remains accountable without exposing an identity,
+   * and already-published attribution stays an opaque Participant Identifier.
+   *
+   * @param {string} accountId
+   * @returns {Promise<{ok: boolean, reason?: "not_found" | "already_deleted"}>}
+   */
+  async function deleteAccount(accountId) {
+    ensureLoaded();
+    const account = accountsById.get(String(accountId || ""));
+    if (!account) return { ok: false, reason: "not_found" };
+    if (account.status === "deleted") {
+      return { ok: false, reason: "already_deleted" };
+    }
+    // 128 random bits: no relation to the previous email, no collision risk
+    // against the email index. The `.invalid` TLD is reserved and unrouteable.
+    const placeholderEmail = `deleted-${crypto
+      .randomBytes(16)
+      .toString("hex")}@sukimacanvas.invalid`;
+    accountIdsByEmail.delete(normalizeEmail(account.email));
+    account.email = placeholderEmail;
+    accountIdsByEmail.set(placeholderEmail, account.accountId);
+    account.passwordHash = "";
+    account.status = "deleted";
+    await revokeAccountSessions(account.accountId);
+    verificationTokens.revokeForAccount(account.accountId);
+    resetTokens.revokeForAccount(account.accountId);
+    logger.info("hosted.account_deleted", { account_id: account.accountId });
+    await enqueueWrite(persistNow);
+    return { ok: true };
   }
 
   /**
@@ -731,6 +788,7 @@ function createFileAccountStore(options) {
     getAccountById,
     markAccountVerified,
     setAccountStatus,
+    deleteAccount,
     updateAccountPassword,
     createVerificationToken,
     consumeVerificationToken,

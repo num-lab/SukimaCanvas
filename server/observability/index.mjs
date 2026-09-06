@@ -254,6 +254,11 @@ const hostedBoardExports = meter.createCounter("wbo.hosted.board_export", {
     'Count of Board Image Export job attempts, labeled by "wbo.hosted.board_export.outcome"; error.type carries the deterministic failure code for failed attempts.',
   unit: "{export}",
 });
+const hostedOutcomePurges = meter.createCounter("wbo.hosted.outcome_purge", {
+  description:
+    'Count of hosted event outcome purge attempts, labeled by "wbo.hosted.outcome_purge.outcome"; error.type carries the deterministic failure code for failed attempts.',
+  unit: "{purge}",
+});
 const loadedBoardsGauge = meter.createObservableGauge("wbo.board.loaded", {
   description: "Current number of board instances loaded in server memory.",
   unit: "{board}",
@@ -886,6 +891,25 @@ function recordBoardExport(outcome, failureCode) {
 }
 
 /**
+ * Records one hosted event outcome purge attempt outcome: the event's Private
+ * Board Archive, Item Attribution, Change Audit, and associated exports were
+ * either purged ("purged") or the attempt failed with a deterministic failure
+ * code while staying recoverable and retryable.
+ *
+ * @param {"purged" | "failed"} outcome
+ * @param {string} [failureCode] deterministic failure code for failed attempts
+ * @returns {void}
+ */
+function recordOutcomePurge(outcome, failureCode) {
+  /** @type {{[key: string]: string}} */
+  const attributes = { "wbo.hosted.outcome_purge.outcome": outcome };
+  if (outcome === "failed" && typeof failureCode === "string" && failureCode) {
+    attributes[ATTR_ERROR_TYPE] = failureCode;
+  }
+  hostedOutcomePurges.add(1, attributes);
+}
+
+/**
  * @param {string} operation
  * @param {string | undefined} boardName
  * @param {number} durationSeconds
@@ -990,6 +1014,7 @@ const logger = {
 const observabilityMetrics = {
   recordBoardArchiveClose,
   recordBoardExport,
+  recordOutcomePurge,
   recordBoardMessage,
   changeHttpActiveRequests,
   recordBoardOperationDuration,

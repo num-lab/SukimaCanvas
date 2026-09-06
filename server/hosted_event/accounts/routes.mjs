@@ -1,15 +1,15 @@
-import observability from "../../observability/index.mjs";
-import { BoundaryError, badRequest } from "../../http/boundary_errors.mjs";
-import { resolveRequestClientIpSafe } from "../../socket/policy.mjs";
-import { requestScheme } from "../../http/observation.mjs";
-import { publicPath } from "../../http/request_url.mjs";
-import { appendSetCookieHeader } from "../../auth/user_secret_cookie.mjs";
 import {
-  HOSTED_SESSION_COOKIE_NAME,
   clearHostedCookie,
+  HOSTED_SESSION_COOKIE_NAME,
   readHostedCookie,
   serializeHostedCookie,
 } from "../../auth/hosted_cookies.mjs";
+import { appendSetCookieHeader } from "../../auth/user_secret_cookie.mjs";
+import { BoundaryError, badRequest } from "../../http/boundary_errors.mjs";
+import { requestScheme } from "../../http/observation.mjs";
+import { publicPath } from "../../http/request_url.mjs";
+import observability from "../../observability/index.mjs";
+import { resolveRequestClientIpSafe } from "../../socket/policy.mjs";
 import {
   createFormSecurity,
   firstHeaderValue,
@@ -448,6 +448,10 @@ function createHostedAccountRoutes(dependencies) {
         ctx.url.searchParams.get("reset") === "1"
           ? translate(templates.login, ctx, "hosted_login_reset_notice")
           : undefined,
+      hostedLoginDeletedNotice:
+        ctx.url.searchParams.get("deleted") === "1"
+          ? translate(templates.login, ctx, "hosted_account_deleted_notice")
+          : undefined,
       hostedLoginSignedInEmail: signedIn ? signedIn.email : undefined,
       hostedLoginSignedInAs: signedIn
         ? translate(templates.login, ctx, "hosted_login_signed_in_as", {
@@ -878,6 +882,62 @@ function createHostedAccountRoutes(dependencies) {
   }
 
   /**
+   * Authenticated account deregistration: re-proves the current password,
+   * then irreversibly pseudonymizes the account in the store. Sessions and
+   * outstanding tokens are revoked by the store; this handler clears the
+   * session cookie, rotates the CSRF token, and lands on the login page with
+   * a notice. Public attribution was already an opaque Participant
+   * Identifier, so nothing public ever carried the identity being removed.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function handleAccountDeleteSubmission(ctx) {
+    if (ctx.request.method !== "POST") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const signedIn = requireSignedIn(ctx);
+    if (!signedIn) {
+      redirectToLogin(ctx);
+      return;
+    }
+    const form = await readFormBody(ctx.request);
+    if (!requestHasValidCsrf(ctx.request, form)) {
+      await renderAccountPage(ctx, 403, { errorKey: "hosted_error_csrf" });
+      return;
+    }
+    const account = store.getAccountById(signedIn.accountId);
+    if (!account || account.status !== "active") {
+      redirectToLogin(ctx);
+      return;
+    }
+    const currentPassword = form.get("currentPassword");
+    const currentPasswordMatches =
+      typeof currentPassword === "string" &&
+      account.passwordHash !== "" &&
+      (await verifyPassword(currentPassword, account.passwordHash));
+    if (!currentPasswordMatches) {
+      await renderAccountPage(ctx, 401, {
+        errorKey: "hosted_account_error_password",
+      });
+      return;
+    }
+    const deleted = await store.deleteAccount(account.accountId);
+    if (!deleted.ok) {
+      // Raced with another deletion or an administrative disable: the
+      // account is no longer signed in either way — send to login.
+      redirectToLogin(ctx);
+      return;
+    }
+    appendSetCookieHeader(
+      ctx.response,
+      clearHostedCookie(HOSTED_SESSION_COOKIE_NAME, cookieOptions()),
+    );
+    rotateCsrfToken(ctx);
+    seeOther(ctx, publicPath(config, "/login?deleted=1"));
+  }
+
+  /**
    * Revokes one session of the current account by public id. Revoking the
    * current session is allowed and signs this device out.
    *
@@ -944,6 +1004,7 @@ function createHostedAccountRoutes(dependencies) {
     serveReset,
     serveAccount,
     serveAccountPassword: handleAccountPasswordSubmission,
+    serveAccountDelete: handleAccountDeleteSubmission,
     serveAccountSessionRevoke: handleAccountSessionRevoke,
     serveAccountSessionsRevokeOthers: handleAccountSessionsRevokeOthers,
   };

@@ -18,6 +18,7 @@ import {
 } from "./routes/hosted_board_page.mjs";
 import {
   serveAccount,
+  serveAccountDelete,
   serveAccountPassword,
   serveAccountSessionRevoke,
   serveAccountSessionsRevokeOthers,
@@ -40,6 +41,7 @@ import {
   serveOperatorChange,
   serveOperatorChanges,
   serveOperatorConsole,
+  serveOperatorOutcomePurgeRetry,
   serveOperatorRejectApplication,
   serveOperatorRejectChange,
   serveOperatorRejectReservation,
@@ -52,14 +54,17 @@ import {
   serveOrganizerCredentialRotate,
   serveOrganizerEvent,
   serveOrganizerEventAccessCode,
+  serveOrganizerEventAudit,
   serveOrganizerEventCover,
+  serveOrganizerEventEntryLock,
   serveOrganizerEventExportDelete,
   serveOrganizerEventExportDownload,
   serveOrganizerEventExportRevoke,
   serveOrganizerEventExports,
-  serveOrganizerEventEntryLock,
   serveOrganizerEventModeratorRevoke,
   serveOrganizerEventModerators,
+  serveOrganizerEventOutcomeDelete,
+  serveOrganizerEventOutcomeRestore,
   serveOrganizerEventPublication,
   serveOrganizerEventPublicationRevoke,
   serveOrganizerInvitationAccept,
@@ -189,6 +194,7 @@ function createWhiteboardHttpHandler() {
       serveAccountSessionsRevokeOthers,
       "hosted_account_sessions_revoke_others",
     ),
+    route("/account/delete", serveAccountDelete, "hosted_account_delete"),
     route("/organizer", serveOrganizerConsole, "hosted_organizer_console"),
     route("/organizer/apply", serveOrganizerApply, "hosted_organizer_apply"),
     route(
@@ -292,6 +298,21 @@ function createWhiteboardHttpHandler() {
       "hosted_organizer_event_publication_revoke",
     ),
     route(
+      "/organizers/{organizerId}/events/{eventId}/outcomes/delete",
+      serveOrganizerEventOutcomeDelete,
+      "hosted_organizer_event_outcome_delete",
+    ),
+    route(
+      "/organizers/{organizerId}/events/{eventId}/outcomes/restore",
+      serveOrganizerEventOutcomeRestore,
+      "hosted_organizer_event_outcome_restore",
+    ),
+    route(
+      "/organizers/{organizerId}/events/{eventId}/audit",
+      serveOrganizerEventAudit,
+      "hosted_organizer_event_audit",
+    ),
+    route(
       "/organizers/{organizerId}/events/{eventId}/exports",
       serveOrganizerEventExports,
       "hosted_organizer_event_exports",
@@ -344,6 +365,11 @@ function createWhiteboardHttpHandler() {
       "/operator/board-sessions/{boardSessionId}/archive-retry",
       serveOperatorArchiveRetry,
       "hosted_operator_archive_retry",
+    ),
+    route(
+      "/operator/events/{eventId}/outcome-purge-retry",
+      serveOperatorOutcomePurgeRetry,
+      "hosted_operator_outcome_purge_retry",
     ),
     route(
       "/operator/reservations",

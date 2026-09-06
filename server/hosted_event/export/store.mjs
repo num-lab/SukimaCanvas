@@ -1,6 +1,6 @@
+import crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import crypto from "node:crypto";
 
 import observability from "../../observability/index.mjs";
 
@@ -526,6 +526,70 @@ function createFileBoardExportStore(options) {
   }
 
   /**
+   * Removes every export record and stored bytes of one event — the outcome
+   * purge's associated-export contract. Scans the whole index rather than a
+   * capped list, so a long export history is purged completely, and replays
+   * idempotently when nothing is left. Records are dropped in memory first so
+   * a concurrent console read can never offer a download whose bytes are
+   * about to vanish.
+   *
+   * @param {string} eventId
+   * @returns {Promise<number>} the number of export records removed
+   */
+  async function deleteExportsForEvent(eventId) {
+    ensureLoaded();
+    const normalized = String(eventId || "");
+    /** @type {StoredBoardExport[]} */
+    const removed = [];
+    for (const record of exportsById.values()) {
+      if (record.eventId === normalized) removed.push(record);
+    }
+    for (const record of removed) {
+      exportsById.delete(record.exportId);
+    }
+    if (removed.length > 0) {
+      await enqueueWrite(async () => {
+        await persistIndexNow();
+        for (const record of removed) {
+          await fs.promises.rm(bytesPath(record.exportId), { force: true });
+        }
+      });
+    }
+    return removed.length;
+  }
+
+  /**
+   * Removes every export record and stored bytes of one Board Session — the
+   * session-scoped retention purge's associated-export contract, so a newer
+   * session's jobs are never destroyed by an older session's 90-day expiry.
+   * Same idempotent replay semantics as the event-wide variant.
+   *
+   * @param {string} boardSessionId
+   * @returns {Promise<number>} the number of export records removed
+   */
+  async function deleteExportsForSession(boardSessionId) {
+    ensureLoaded();
+    const normalized = String(boardSessionId || "");
+    /** @type {StoredBoardExport[]} */
+    const removed = [];
+    for (const record of exportsById.values()) {
+      if (record.boardSessionId === normalized) removed.push(record);
+    }
+    for (const record of removed) {
+      exportsById.delete(record.exportId);
+    }
+    if (removed.length > 0) {
+      await enqueueWrite(async () => {
+        await persistIndexNow();
+        for (const record of removed) {
+          await fs.promises.rm(bytesPath(record.exportId), { force: true });
+        }
+      });
+    }
+    return removed.length;
+  }
+
+  /**
    * Reads a succeeded export's PNG bytes, or null when they are gone.
    *
    * @param {string} exportId
@@ -569,6 +633,8 @@ function createFileBoardExportStore(options) {
     verifyExportDownloadToken,
     revokeExportDownload,
     deleteExport,
+    deleteExportsForEvent,
+    deleteExportsForSession,
     readExportBytes,
     flush,
   };

@@ -112,6 +112,27 @@ function createBoardExportPipeline(dependencies) {
   const exportsInFlight = new Set();
 
   /**
+   * Whether a job's event outcomes are already invalidated by the outcome
+   * retention work: a pending early-deletion request or a purged session.
+   * Such jobs are retired instead of rendered — their source archive is on
+   * its way out or gone, and no route can serve the result anyway.
+   *
+   * @param {{eventId: string, boardSessionId: string}} job
+   * @returns {boolean}
+   */
+  function eventOutcomesInvalidated(job) {
+    const event = organizerStore.getEventById(job.eventId);
+    if (
+      event?.outcomeDeletion &&
+      event.outcomeDeletion.purgedAtMs === null
+    ) {
+      return true;
+    }
+    const session = organizerStore.getBoardSessionById(job.boardSessionId);
+    return Boolean(session && session.outcomesPurgedAtMs !== null);
+  }
+
+  /**
    * Requests an export for one Board Session. Only a successfully archived
    * session — sealed `closed` with its archive key — qualifies: the job reads
    * the Private Board Archive, never a still-editable live Board Session, and
@@ -262,6 +283,19 @@ function createBoardExportPipeline(dependencies) {
     const failed = [];
     for (const job of due) {
       if (exportsInFlight.has(job.exportId)) continue;
+      // The event's outcomes may have been invalidated after the job was
+      // queued (early deletion requested, or the session purged): such a job
+      // must never render — its source archive is on its way out or gone. The
+      // request gate refuses fresh jobs; this guard retires the stale ones.
+      if (eventOutcomesInvalidated(job)) {
+        await exportStore.deleteExport(job.exportId);
+        logger.info("hosted.board_export_retired_invalidated_outcome", {
+          board_session: job.boardSessionId,
+          event: job.eventId,
+          export_id: job.exportId,
+        });
+        continue;
+      }
       if (job.status === "processing") {
         // Orphaned by a restart: no runner in this process holds it. Re-queue
         // it; the claim below then proceeds exactly like a fresh job.

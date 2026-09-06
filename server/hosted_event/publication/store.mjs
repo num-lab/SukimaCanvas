@@ -352,6 +352,31 @@ function createFilePublicationStore(options) {
   }
 
   /**
+   * Removes the publication record of a Board Session entirely — the outcome
+   * purge's contract. After this the read routes resolve null and refuse with
+   * the same uniform 404 as an unknown canvas; a stale share token digest is
+   * dropped from the index so the capability does not survive at rest. The
+   * derived canvas objects themselves are deleted by the retention pipeline
+   * through the archive store's key-prefix listing. Missing publications are
+   * already gone: the purge replays idempotently.
+   *
+   * @param {string} boardSessionId
+   * @returns {Promise<void>}
+   */
+  async function purgeForBoardSession(boardSessionId) {
+    ensureLoaded();
+    const publication = publicationsByBoardSession.get(
+      String(boardSessionId || ""),
+    );
+    if (!publication) return;
+    if (publication.shareTokenDigest) {
+      boardSessionIdsByShareTokenDigest.delete(publication.shareTokenDigest);
+    }
+    publicationsByBoardSession.delete(publication.boardSessionId);
+    await enqueueWrite(persistNow);
+  }
+
+  /**
    * The publication of a Board Session, whatever its status, or null.
    *
    * @param {string} boardSessionId
@@ -396,6 +421,7 @@ function createFilePublicationStore(options) {
   return {
     publish,
     revoke,
+    purgeForBoardSession,
     getPublicationForBoardSession,
     getPublicationByShareToken,
     flush,
