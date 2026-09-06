@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="{{hostedLanguage}}" dir="{{hostedDirection}}">
+  <head>
+    <meta charset="utf-8" />
+    <title>{{hostedTranslations.hosted_operator_history_title}}</title>
+    <base href="{{baseHref}}" />
+    <link rel="stylesheet" href="hosted.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/x-icon" sizes="16x16" href="favicon.ico" />
+    <link rel="apple-touch-icon" href="favicon.svg" />
+    <link rel="canonical" href="{{hostedCanonicalUrl}}" />
+    {{#hostedLanguageLinks}}
+    <link rel="alternate" hreflang="{{language}}" href="{{href}}" />
+    {{/hostedLanguageLinks}}
+    {{{htmlHeadSnippet}}}
+  </head>
+  <body class="hosted-shell">
+    <header class="hosted-header">
+      <a class="hosted-brand" href=".">SukimaCanvas</a>
+      <nav aria-label="{{hostedTranslations.hosted_language_label}}">
+        {{#if hostedAccount}}
+        <span class="hosted-account-email">{{hostedAccount.email}}</span>
+        <a href="account">{{hostedTranslations.hosted_nav_account}}</a>
+        <a href="organizer">{{hostedTranslations.hosted_nav_organizer}}</a>
+        {{#if hostedAccount.isOperator}}
+        <a href="operator">{{hostedTranslations.hosted_nav_operator}}</a>
+        {{/if}}
+        <a href="logout">{{hostedTranslations.hosted_nav_logout}}</a>
+        {{else}}
+        <a href="login">{{hostedTranslations.hosted_nav_login}}</a>
+        <a href="register">{{hostedTranslations.hosted_nav_register}}</a>
+        {{/if}}
+        <a href="source">{{hostedTranslations.hosted_source_link}}</a>
+        <details class="hosted-language-picker">
+          <summary>{{hostedLanguage}}</summary>
+          <ul>
+            {{#hostedLanguageLinks}}
+            <li><a href="{{href}}" hreflang="{{language}}">{{language}}</a></li>
+            {{/hostedLanguageLinks}}
+          </ul>
+        </details>
+      </nav>
+    </header>
+
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-history-title">
+        <h1 id="hosted-history-title">{{hostedTranslations.hosted_operator_history_title}}</h1>
+        {{#if hostedOperatorForbidden}}
+        <p class="hosted-form-error" role="alert">{{hostedOperatorForbidden}}</p>
+        {{else}}
+        <p class="hosted-account-intro">{{hostedTranslations.hosted_operator_history_intro}}</p>
+        <p class="hosted-account-alt">
+          <a href="operator">{{hostedTranslations.hosted_operator_title}}</a>
+          ·
+          <a href="operator/reservations">{{hostedTranslations.hosted_operator_reservations_title}}</a>
+          ·
+          <a href="operator/changes">{{hostedTranslations.hosted_operator_changes_title}}</a>
+        </p>
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_operator_history_form_title}}</h2>
+        <p class="hosted-account-note">{{hostedTranslations.hosted_operator_history_privacy_note}}</p>
+        {{#if hostedOperatorHistoryHasOrganizers}}
+        <form method="post" action="operator/historical-imports" enctype="multipart/form-data">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="history-organizer">{{hostedTranslations.hosted_operator_history_organizer_label}}</label>
+            <select id="history-organizer" name="organizerId" required>
+              <option value="" disabled selected>{{hostedTranslations.hosted_operator_history_organizer_placeholder}}</option>
+              {{#hostedOperatorHistoryOrganizers}}
+              <option value="{{organizerId}}">{{name}}</option>
+              {{/hostedOperatorHistoryOrganizers}}
+            </select>
+          </div>
+          <div class="hosted-form-field">
+            <label for="history-source">{{hostedTranslations.hosted_operator_history_file_label}}</label>
+            <input id="history-source" type="file" name="source" accept=".svg,image/svg+xml" required />
+          </div>
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_operator_history_submit}}</button>
+        </form>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_operator_history_no_organizers}}</p>
+        {{/if}}
+        {{#if hostedOperatorHistoryNotice}}
+        <p class="hosted-account-note" role="status">{{hostedOperatorHistoryNotice}}</p>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_operator_history_list_title}}</h2>
+        {{#if hostedOperatorHistoryHasImports}}
+        <ul class="hosted-operator-queue">
+          {{#hostedOperatorHistoryImports}}
+          <li class="hosted-operator-queue-item">
+            <div class="hosted-operator-queue-meta">
+              <span class="hosted-operator-queue-name">{{sourceLabel}}</span>
+              <span>{{statusLabel}}</span>
+              <span>{{../hostedTranslations.hosted_operator_history_organizer_label}}: {{organizerName}}</span>
+              {{#if itemCount}}
+              <span>{{../hostedTranslations.hosted_operator_history_items_label}}: {{itemCount}}</span>
+              {{/if}}
+              <span>{{../hostedTranslations.hosted_operator_history_time_label}}: {{importedAt}}</span>
+              {{#if failureLabel}}
+              <span>{{../hostedTranslations.hosted_operator_history_failure_label}}: {{failureLabel}}</span>
+              {{/if}}
+              {{#if failureDetail}}
+              <span>{{failureDetail}}</span>
+              {{/if}}
+            </div>
+          </li>
+          {{/hostedOperatorHistoryImports}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_operator_history_list_empty}}</p>
+        {{/if}}
+        {{/if}}
+      </section>
+    </main>
+
+    <footer class="hosted-footer">
+      <span>{{hostedTranslations.hosted_service_name}}</span>
+      <a href="source">{{hostedTranslations.hosted_source_link}}</a>
+    </footer>
+  </body>
+</html>

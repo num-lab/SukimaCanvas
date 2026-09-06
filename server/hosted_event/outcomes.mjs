@@ -207,7 +207,9 @@ function createOutcomeRetentionPipeline(dependencies) {
 
     const markers = await organizerStore.markEventOutcomesPurged({
       eventId,
-      sessionIds: deletionDue ? undefined : dueSessions.map((s) => s.boardSessionId),
+      sessionIds: deletionDue
+        ? undefined
+        : dueSessions.map((s) => s.boardSessionId),
     });
 
     // The Change Audit boundary of the board: the durable mutation ledger

@@ -599,7 +599,6 @@ test("the archive store lists and deletes a session's whole key namespace", asyn
   assert.ok(await archiveStore.readArchive("board-archives/s2/canvas.svg"));
 });
 
-
 test("the retention purge recovers from a restart: durable due-state drives a freshly composed pipeline", async () => {
   const fixture = await createOutcomeFixture(1000);
   const { holder } = fixture;
@@ -648,9 +647,7 @@ test("the retention purge recovers from a restart: durable due-state drives a fr
   );
   assert.equal(await freshArchiveStore.readArchive(canvasKey), null);
   assert.equal(
-    freshPublicationStore.getPublicationForBoardSession(
-      session.boardSessionId,
-    ),
+    freshPublicationStore.getPublicationForBoardSession(session.boardSessionId),
     null,
   );
   assert.equal(freshExportStore.getExport(exportId), null);

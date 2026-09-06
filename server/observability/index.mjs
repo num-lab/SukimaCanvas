@@ -267,6 +267,14 @@ const hostedOutcomePurges = meter.createCounter("wbo.hosted.outcome_purge", {
     'Count of hosted event outcome purge attempts, labeled by "wbo.hosted.outcome_purge.outcome"; error.type carries the deterministic failure code for failed attempts.',
   unit: "{purge}",
 });
+const hostedHistoricalImports = meter.createCounter(
+  "wbo.hosted.historical_import",
+  {
+    description:
+      'Count of controlled Historical Archive import attempts, labeled by "wbo.hosted.historical_import.outcome"; error.type carries the deterministic failure code for rejected attempts.',
+    unit: "{import}",
+  },
+);
 const hostedNotices = meter.createCounter("wbo.hosted.notice", {
   description:
     'Count of hosted notice delivery attempts, labeled by "wbo.hosted.notice.outcome" and "wbo.hosted.notice.kind"; a failed attempt is retried with backoff and stays observable.',
@@ -941,6 +949,29 @@ function recordOutcomePurge(outcome, failureCode) {
 }
 
 /**
+ * Records one controlled Historical Archive import attempt: the source was
+ * either imported as a private, unknown-author archive ("imported") or the
+ * attempt failed with a deterministic failure code while producing no
+ * artifact and staying recorded in the operator audit trail.
+ *
+ * @param {"imported" | "rejected"} outcome
+ * @param {string} [failureCode] deterministic failure code for rejected attempts
+ * @returns {void}
+ */
+function recordHistoricalImport(outcome, failureCode) {
+  /** @type {{[key: string]: string}} */
+  const attributes = { "wbo.hosted.historical_import.outcome": outcome };
+  if (
+    outcome === "rejected" &&
+    typeof failureCode === "string" &&
+    failureCode
+  ) {
+    attributes[ATTR_ERROR_TYPE] = failureCode;
+  }
+  hostedHistoricalImports.add(1, attributes);
+}
+
+/**
  * Records one hosted notice delivery attempt outcome: the notice was either
  * handed to the mail vendor ("sent") or the attempt failed and stays queued
  * for a backed-off retry. The kind attribute separates account mail from the
@@ -1064,6 +1095,7 @@ const observabilityMetrics = {
   recordBoardExport,
   recordWebhookDelivery,
   recordOutcomePurge,
+  recordHistoricalImport,
   recordNoticeDelivery,
   recordBoardMessage,
   changeHttpActiveRequests,

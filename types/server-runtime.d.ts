@@ -67,6 +67,7 @@ export type HostedEventModule = {
   serveOperatorConsole: HttpRouteHandler;
   serveOperatorArchiveRetry: HttpRouteHandler;
   serveOperatorOutcomePurgeRetry: HttpRouteHandler;
+  serveOperatorHistoricalImports: HttpRouteHandler;
   serveOperatorApplication: HttpRouteHandler;
   serveOperatorApproveApplication: HttpRouteHandler;
   serveOperatorRejectApplication: HttpRouteHandler;

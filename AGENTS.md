@@ -582,6 +582,28 @@ cadence, discards response bodies unread, treats every failure as data, and
 never logs secrets, signatures, or endpoint URLs. Revocation drops a
 subscription's pending records with the Owner's explicit opt-out.
 
+Historical Archive import lives under
+[hosted_event/history/](./server/hosted_event/history/): a Platform Operator
+imports one explicitly selected legacy WBO SVG for one explicitly selected
+Organizer from the operator console (`GET/POST
+/operator/historical-imports`). The strict parser in
+[legacy_svg_import.mjs](./server/hosted_event/history/legacy_svg_import.mjs)
+accepts only the stored-SVG item vocabulary under `drawingArea` and
+re-serializes every item canonically through the tools' stored-item
+contracts, so unsupported structure is deterministically rejected, hostile
+attributes and markup cannot survive, and every `data-wbo-created-by` claim
+is stripped — a Historical Archive is private, read-only, authorship
+`unknown`, and has no Change Audit, ledger object, or Participant/operator
+fabrication. Imports are idempotent by construction: the import id derives
+from the target Organizer plus the source digest, a crashed import is
+completed (never duplicated) by re-importing, and a completed import refuses
+the same source deterministically; every attempt, outcome, and failure reason
+is recorded in `historical_archives.json` and audited only on the operator
+console. There is no history-directory scan, no batch migration, no
+Event/Reservation creation, and no path that reopens a Historical Archive as
+a Board Session; retention never enumerates the `historical-archives/` key
+namespace.
+
 Account deregistration is owned by
 [hosted_event/accounts/store.mjs](./server/hosted_event/accounts/store.mjs):
 `deleteAccount` irreversibly pseudonymizes the account (the email is replaced

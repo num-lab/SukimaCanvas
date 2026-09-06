@@ -97,7 +97,6 @@ function uploadCover(app, jar, pathname, fields, file) {
   return requestWithCookies(app, pathname, {
     method: "POST",
     cookie: jarCookie(jar),
-    // @ts-expect-error the helper forwards a Buffer body to req.write unchanged.
     body,
     headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
   });

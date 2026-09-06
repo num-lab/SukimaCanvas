@@ -67,7 +67,7 @@ async function createHostedServer(overrides = {}) {
 /**
  * @param {import("http").Server} app
  * @param {string} requestPath
- * @param {{method?: string, body?: string, headers?: {[key: string]: string}, cookie?: string, binary?: boolean}} [options]
+ * @param {{method?: string, body?: string | Buffer, headers?: {[key: string]: string}, cookie?: string, binary?: boolean}} [options]
  * @returns {Promise<{statusCode: number, headers: import("http").IncomingHttpHeaders, body: string, setCookie: string[]}>}
  */
 function requestWithCookies(app, requestPath, options = {}) {
