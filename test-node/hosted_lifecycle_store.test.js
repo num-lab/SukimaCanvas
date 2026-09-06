@@ -220,7 +220,7 @@ test("advanceLifecycle moves a session scheduled -> open -> closing by time; the
   );
 });
 
-test("a failed archive keeps the session draining and auditable", async () => {
+test("a failed archive enters ARCHIVE_FAILED with its failure context and stays auditable", async () => {
   const holder = { now: 1_000_000 };
   const store = makeStore(await createDataDir(), holder);
   const organizerId = await setupOrganizer(store);
@@ -240,17 +240,178 @@ test("a failed archive keeps the session draining and auditable", async () => {
   await store.advanceLifecycle({ now: start, closeDrainMs: DRAIN });
   holder.now = end;
   await store.advanceLifecycle({ now: end, closeDrainMs: DRAIN });
+  const boardSessionId =
+    store.getBoardSessionForReservation(reservationId)?.boardSessionId ?? "";
   await store.recordBoardSessionArchiveFailed({
-    boardSessionId:
-      store.getBoardSessionForReservation(reservationId)?.boardSessionId ?? "",
+    boardSessionId,
+    code: "storage_write_failed",
+    message: "EACCES: archive object store is not writable",
   });
   const session = store.getBoardSessionForReservation(reservationId);
-  assert.equal(session?.status, "closing");
+  assert.equal(session?.status, "archive_failed");
   assert.equal(session?.archiveKey, null);
+  assert.equal(session?.archiveFailure?.code, "storage_write_failed");
+  assert.equal(session?.archiveFailure?.attempts, 1);
+  assert.equal(session?.archiveFailure?.firstFailedAtMs, end);
+  assert.equal(session?.archiveFailure?.lastFailedAtMs, end);
+  // Not shown as archived anywhere: no archive key, no final sequence.
+  assert.equal(session?.archivedFinalSeq, null);
   const failures = store
     .listAuditForOrganizer(organizerId)
     .filter((record) => record.action === "board_session.archive_failed");
   assert.equal(failures.length, 1);
+
+  // An ARCHIVE_FAILED session is invisible to the operator's failure list of
+  // *other* states: exactly this session is listed, with its context.
+  const listed = store.listArchiveFailedBoardSessions();
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0]?.boardSessionId, boardSessionId);
+  assert.equal(listed[0]?.archiveFailure?.code, "storage_write_failed");
+});
+
+test("archive failure recovery: backoff, idempotent retries, and the operator retry", async () => {
+  const holder = { now: 1_000_000 };
+  const store = makeStore(await createDataDir(), holder);
+  const organizerId = await setupOrganizer(store);
+  const start = holder.now + HOUR;
+  const end = start + HOUR;
+  const { reservationId } = await approveReservation(
+    store,
+    organizerId,
+    holder.now,
+    {
+      startsAtMs: start,
+      endsAtMs: end,
+      seats: 20,
+    },
+  );
+  holder.now = start;
+  await store.advanceLifecycle({ now: start, closeDrainMs: DRAIN });
+  holder.now = end;
+  await store.advanceLifecycle({ now: end, closeDrainMs: DRAIN });
+  const boardSessionId =
+    store.getBoardSessionForReservation(reservationId)?.boardSessionId ?? "";
+  const session = () =>
+    store.getBoardSessionForReservation(reservationId) ?? undefined;
+  /**
+   * @param {number} now
+   */
+  const dueList = (now) =>
+    store.listBoardSessionsDueToClose({
+      now,
+      closeDrainMs: DRAIN,
+      archiveRetryMs: 15 * 60 * 1000,
+    });
+
+  // First failure: the session becomes ARCHIVE_FAILED.
+  await store.recordBoardSessionArchiveFailed({
+    boardSessionId,
+    code: "storage_write_failed",
+    message: "unwritable",
+  });
+  assert.equal(session()?.status, "archive_failed");
+
+  // A zero backoff disables the automatic retry entirely — the session is
+  // never due on its own; only an operator retry moves it.
+  assert.deepEqual(
+    store.listBoardSessionsDueToClose({
+      now: end + 10 * HOUR,
+      closeDrainMs: DRAIN,
+      archiveRetryMs: 0,
+    }),
+    [],
+  );
+
+  // Before the retry backoff elapses, the pipeline is not due; a failing
+  // automatic retry after the backoff refreshes the context without
+  // resetting its history.
+  assert.deepEqual(dueList(end + 5 * 60 * 1000), []);
+  holder.now = end + 15 * 60 * 1000;
+  assert.equal(dueList(holder.now).length, 1);
+  await store.recordBoardSessionArchiveFailed({
+    boardSessionId,
+    code: "storage_write_failed",
+    message: "still unwritable",
+  });
+  assert.equal(session()?.status, "archive_failed");
+  assert.equal(session()?.archiveFailure?.attempts, 2);
+  assert.equal(session()?.archiveFailure?.firstFailedAtMs, end);
+  assert.equal(session()?.archiveFailure?.lastFailedAtMs, holder.now);
+
+  // A failed attempt against a session that is not waiting is ignored.
+  holder.now += 15 * 60 * 1000;
+  const failed = store.getBoardSessionById("missing");
+  assert.equal(failed, null);
+  await store.recordBoardSessionArchiveFailed({ boardSessionId: "missing" });
+  assert.equal(session()?.archiveFailure?.attempts, 2);
+
+  // The operator's manual retry moves the session back to closing (retry
+  // context kept), which makes it due immediately — no backoff wait.
+  assert.deepEqual(
+    await store.retryBoardSessionArchive({
+      boardSessionId: "missing",
+      operatorAccountId: "operator-1",
+    }),
+    { ok: false, reason: "not_found" },
+  );
+  holder.now += 60 * 1000; // still inside the automatic backoff window
+  assert.deepEqual(
+    await store.retryBoardSessionArchive({
+      boardSessionId,
+      operatorAccountId: "operator-1",
+    }),
+    { ok: true },
+  );
+  assert.equal(session()?.status, "closing");
+  assert.equal(session()?.archiveFailure?.attempts, 2);
+  assert.equal(dueList(holder.now).length, 1);
+
+  // A second manual retry before the next attempt is a deterministic refusal:
+  // no duplicate advancement.
+  assert.deepEqual(
+    await store.retryBoardSessionArchive({
+      boardSessionId,
+      operatorAccountId: "operator-2",
+    }),
+    { ok: false, reason: "not_failed" },
+  );
+
+  // A sealing retry succeeds from either state and clears the failure.
+  assert.ok(
+    (
+      await store.markBoardSessionClosed({
+        boardSessionId,
+        archiveKey: `board-archives/${boardSessionId}/manifest.json`,
+        finalSeq: 2,
+        archivedAtMs: holder.now,
+      })
+    ).ok,
+  );
+  assert.equal(session()?.status, "closed");
+  assert.equal(session()?.archiveFailure, null);
+  assert.equal(session()?.archivedFinalSeq, 2);
+  assert.deepEqual(store.listArchiveFailedBoardSessions(), []);
+
+  // The audit trail carries one record per failed attempt, the operator's
+  // retry request, and exactly one seal.
+  const audit = store
+    .listAuditForOrganizer(organizerId)
+    .filter((record) => record.subjectId === boardSessionId);
+  assert.equal(
+    audit.filter((record) => record.action === "board_session.archive_failed")
+      .length,
+    2,
+  );
+  const retryRecords = audit.filter(
+    (record) => record.action === "board_session.archive_retry_requested",
+  );
+  assert.equal(retryRecords.length, 1);
+  assert.equal(retryRecords[0]?.actorKind, "operator");
+  assert.equal(retryRecords[0]?.actorAccountId, "operator-1");
+  assert.equal(
+    audit.filter((record) => record.action === "board_session.closed").length,
+    1,
+  );
 });
 
 test("interrupted lifecycle work resumes after a restart and catches up", async () => {

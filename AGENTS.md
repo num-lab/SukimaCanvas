@@ -417,16 +417,27 @@ snapshot with the mutation ledger on one final authoritative sequence, and
 only on agreement produces the immutable Private Board Archive — canvas with
 item attribution, the accepted-mutation ledger as audit boundary, and a
 manifest with integrity hashes — before sealing the session `closed`
-(`markBoardSessionClosed`). Validation or storage failure records an
-observable failure and leaves the session `closing` for the next pass to
-retry; a close is never faked. Archive objects live under
-`<WBO_HOSTED_DATA_DIR>/board-archives/` via
+(`markBoardSessionClosed`). Validation or storage failure moves the session
+to a durable `archive_failed` state (`recordBoardSessionArchiveFailed`) that
+keeps the classified failure code, the internal detail, and the attempt
+history on the session record plus a Change Audit entry and an archive
+metric; an `archive_failed` session admits no writes and never displays an
+archived result. Recovery is idempotent end to end: automatic retries
+re-attempt `archive_failed` sessions after
+`WBO_HOSTED_BOARD_SESSION_ARCHIVE_RETRY_MS` (the deterministic manifest and
+the immutable archive store make re-puts no-ops, and the guarded seal never
+double-advances), while Platform Operators can retry immediately from the
+operator console (`retryBoardSessionArchive`, POST
+`/operator/board-sessions/{boardSessionId}/archive-retry`), which lists
+failed work with its failure context. A close is never faked: the read-only
+completion notification is sent only when the session actually sealed.
+Archive objects live under `<WBO_HOSTED_DATA_DIR>/board-archives/` via
 [archive/store.mjs](./server/hosted_event/archive/store.mjs), whose keys are
 internal and never public access credentials. A sealed session cannot be
 re-edited or reopened; its connected sockets end on a read-only completion
 state (`BOARDSTATE` carrying `eventClosed: true`, demoted to reader) and
 reconnects are refused by admission. Empty Board Sessions archive the same
-way. Failure recovery with explicit retry and notifications builds on this
+way. Failure notifications to organizers and lifecycle notices build on this
 state.
 
 ### tests, benchmarks, and profiling

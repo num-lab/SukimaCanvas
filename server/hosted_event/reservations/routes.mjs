@@ -44,6 +44,7 @@ const SESSION_STATUS_LABEL_KEYS = {
   scheduled: "hosted_session_status_scheduled",
   open: "hosted_session_status_open",
   closing: "hosted_session_status_closing",
+  archive_failed: "hosted_session_status_archive_failed",
   closed: "hosted_session_status_closed",
   cancelled: "hosted_session_status_cancelled",
 };

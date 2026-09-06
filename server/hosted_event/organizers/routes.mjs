@@ -54,15 +54,27 @@ const ROLE_LABEL_KEYS = {
   admin: "hosted_role_admin",
 };
 
+/** Archive failure code -> translation key for the operator console. */
+const ARCHIVE_FAILURE_LABEL_KEYS = {
+  final_sequence_mismatch: "hosted_archive_failure_final_sequence_mismatch",
+  snapshot_save_failed: "hosted_archive_failure_snapshot_save_failed",
+  ledger_unavailable: "hosted_archive_failure_ledger_unavailable",
+  storage_write_failed: "hosted_archive_failure_storage_write_failed",
+  archive_conflict: "hosted_archive_failure_archive_conflict",
+  seal_failed: "hosted_archive_failure_seal_failed",
+  internal: "hosted_archive_failure_internal",
+};
+
 /**
  * HTTP flows for Organizer Applications and the Platform Operator console.
  *
  * A verified account submits one application at a time and sees its status; a
  * Platform Operator (an account whose email is provisioned in
  * `HOSTED_OPERATOR_EMAILS`) reviews the pending queue and approves or rejects
- * each application. Approval atomically creates the Organizer and grants the
- * applicant Organizer Owner. Every input is hostile until validated, and no
- * response ever exposes the operator-only rejection note to the applicant.
+ * each application, and reviews Board Sessions whose archive failed and
+ * retries their close. Approval atomically creates the Organizer and grants
+ * the applicant Organizer Owner. Every input is hostile until validated, and
+ * no response ever exposes the operator-only rejection note to the applicant.
  *
  * @param {{
  *   config: ServerConfig,
@@ -71,6 +83,7 @@ const ROLE_LABEL_KEYS = {
  *   integrationStore: ReturnType<typeof import("../integrations/store.mjs").createFileIntegrationStore>,
  *   limiter: ReturnType<typeof import("../accounts/rate_limits.mjs").createRateLimiter>,
  *   operatorEmails: Set<string>,
+ *   advanceEventLifecycle?: () => Promise<void>,
  *   templates: {
  *     organizerApply: HostedTemplate,
  *     operator: HostedTemplate,
@@ -88,6 +101,7 @@ function createOrganizerRoutes(dependencies) {
     integrationStore,
     limiter,
     operatorEmails,
+    advanceEventLifecycle,
     templates,
   } = dependencies;
   const { ensureCsrfToken, requestHasValidCsrf } = createFormSecurity(config);
@@ -365,18 +379,13 @@ function createOrganizerRoutes(dependencies) {
 
   /**
    * @param {HttpRouteContext} ctx
+   * @param {number} statusCode
+   * @param {{noticeKey?: string}} state
    * @returns {void}
    */
-  function serveOperatorConsole(ctx) {
-    if (ctx.request.method !== "GET") {
-      throw new BoundaryError(405, "method_not_allowed");
-    }
-    const operator = requireOperator(ctx);
-    if (!operator) return;
-    const { language } = templates.operator.translationsFor(
-      ctx.request,
-      ctx.url,
-    );
+  function renderOperatorConsole(ctx, statusCode, state) {
+    const template = templates.operator;
+    const { language } = template.translationsFor(ctx.request, ctx.url);
     const pending = organizerStore
       .listPendingApplications()
       .map((application) => {
@@ -388,10 +397,118 @@ function createOrganizerRoutes(dependencies) {
           submittedAt: formatTimestamp(language, application.createdAtMs),
         };
       });
-    templates.operator.serveWithStatus(ctx.request, ctx.response, 200, {
+    // The archive-failure work list: Board Sessions waiting in
+    // ARCHIVE_FAILED. The failure detail (code, message, attempts) is the
+    // operator's recovery context and renders only on this authorized
+    // console — organizer and participant surfaces show no internal errors.
+    const archiveFailures = organizerStore
+      .listArchiveFailedBoardSessions()
+      .map((session) => {
+        const event = organizerStore.getEventById(session.eventId);
+        const organizer = organizerStore.getOrganizerById(session.organizerId);
+        const failure = session.archiveFailure;
+        const labelKey = failure
+          ? ARCHIVE_FAILURE_LABEL_KEYS[
+              /** @type {keyof typeof ARCHIVE_FAILURE_LABEL_KEYS} */ (
+                failure.code
+              )
+            ]
+          : undefined;
+        return {
+          boardSessionId: session.boardSessionId,
+          eventName: event ? event.name : "",
+          organizerName: organizer ? organizer.name : "",
+          failureCode: failure
+            ? labelKey
+              ? translate(template, ctx, labelKey)
+              : failure.code
+            : "",
+          failureMessage: failure ? failure.message : "",
+          failureAttempts: failure ? failure.attempts : 0,
+          lastFailedAt: failure
+            ? formatTimestamp(language, failure.lastFailedAtMs)
+            : "",
+        };
+      });
+    template.serveWithStatus(ctx.request, ctx.response, statusCode, {
       hostedOperatorPending: pending,
       hostedOperatorPendingCount: pending.length,
       hostedOperatorHasPending: pending.length > 0,
+      hostedOperatorArchiveFailures: archiveFailures,
+      hostedOperatorHasArchiveFailures: archiveFailures.length > 0,
+      hostedOperatorArchiveNotice: state.noticeKey
+        ? translate(template, ctx, state.noticeKey)
+        : undefined,
+      csrfToken: ensureCsrfToken(ctx),
+    });
+  }
+
+  /**
+   * @param {HttpRouteContext} ctx
+   * @returns {void}
+   */
+  function serveOperatorConsole(ctx) {
+    if (ctx.request.method !== "GET") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const operator = requireOperator(ctx);
+    if (!operator) return;
+    renderOperatorConsole(ctx, 200, {});
+  }
+
+  /**
+   * A Platform Operator's authorized archive retry: moves the failed Board
+   * Session back into the close pipeline and runs one lifecycle pass now, so
+   * the re-rendered console shows the outcome immediately. The retry is
+   * idempotent at the store (guarded by the session's status) and at the
+   * pipeline (deterministic archive objects, immutable store), so double
+   * submissions and racing operators are deterministic notices, never
+   * duplicate archives.
+   *
+   * @param {HttpRouteContext} ctx
+   * @returns {Promise<void>}
+   */
+  async function serveOperatorArchiveRetry(ctx) {
+    if (ctx.request.method !== "POST") {
+      throw new BoundaryError(405, "method_not_allowed");
+    }
+    const operator = requireOperator(ctx);
+    if (!operator) return;
+    const boardSessionId = ctx.params.boardSessionId || "";
+    const session = organizerStore.getBoardSessionById(boardSessionId);
+    if (!session) throw new BoundaryError(404, "board_session_not_found");
+    const form = await readFormBody(ctx.request);
+    if (!requestHasValidCsrf(ctx.request, form)) {
+      renderOperatorConsole(ctx, 403, { noticeKey: "hosted_error_csrf" });
+      return;
+    }
+    const retry = await organizerStore.retryBoardSessionArchive({
+      boardSessionId,
+      operatorAccountId: operator.accountId,
+    });
+    if (!retry.ok) {
+      // Already sealed, cancelled, or retried by a concurrent operator: the
+      // console re-renders the current state with a deterministic notice.
+      renderOperatorConsole(ctx, 409, {
+        noticeKey: "hosted_operator_archive_retry_error_state",
+      });
+      return;
+    }
+    logger.info("hosted.board_session_archive_retry_requested", {
+      operator_account_id: operator.accountId,
+      board_session: boardSessionId,
+    });
+    if (typeof advanceEventLifecycle === "function") {
+      // Run the close pipeline now: the retried session is due immediately,
+      // and the console's failure list reflects the attempt's outcome.
+      await advanceEventLifecycle();
+    }
+    const outcome = organizerStore.getBoardSessionById(boardSessionId);
+    renderOperatorConsole(ctx, 200, {
+      noticeKey:
+        outcome && outcome.status === "closed"
+          ? "hosted_operator_archive_retry_completed"
+          : "hosted_operator_archive_retry_failed",
     });
   }
 
@@ -1196,6 +1313,7 @@ function createOrganizerRoutes(dependencies) {
   return {
     serveOrganizerApply,
     serveOperatorConsole,
+    serveOperatorArchiveRetry,
     serveOperatorApplication,
     serveOperatorApproveApplication,
     serveOperatorRejectApplication,

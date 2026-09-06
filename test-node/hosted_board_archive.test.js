@@ -298,7 +298,7 @@ test("an empty Board Session archives a valid empty canvas and closes", async ()
   );
 });
 
-test("a validation failure keeps the session draining and a retry can still seal it", async () => {
+test("a validation failure moves the session to ARCHIVE_FAILED and a retry can still seal it", async () => {
   await createSocketScenario(
     { historyDirPrefix: "wbo-archive-invalid-" },
     async (scenario) => {
@@ -337,7 +337,10 @@ test("a validation failure keeps the session draining and a retry can still seal
       const session = fixture.organizerStore.getBoardSessionForEvent(
         fixture.event.eventId,
       );
-      assert.equal(session?.status, "closing");
+      assert.equal(session?.status, "archive_failed");
+      assert.equal(session?.archiveFailure?.code, "final_sequence_mismatch");
+      assert.equal(session?.archiveFailure?.attempts, 1);
+      assert.ok(session?.archiveFailure?.message.length > 0);
       assert.equal(session?.archiveKey, null);
       assert.equal(
         await fixture.archiveStore.readArchive(
@@ -355,8 +358,30 @@ test("a validation failure keeps the session draining and a retry can still seal
         );
       assert.equal(failures.length, 1, "the failure is observable");
 
-      // Once the ledger agrees again, the next close pass seals the session.
+      // A failed close never tells connected participants the event ended:
+      // that would dress the failure up as a successful completion.
+      assert.equal(
+        alice.created.emitted.some(
+          /** @param {{event: string, payload: any}} emitted */
+          (emitted) =>
+            emitted.event === "boardstate" &&
+            emitted.payload?.eventClosed === true,
+        ),
+        false,
+        "the completion state is withheld while the archive failed",
+      );
+
+      // Once the ledger agrees again, an authorized operator retry makes the
+      // session due immediately and the close pass seals it.
       await fs.writeFile(ledgerPath, originalLedger);
+      assert.ok(
+        (
+          await fixture.organizerStore.retryBoardSessionArchive({
+            boardSessionId: /** @type {string} */ (session?.boardSessionId),
+            operatorAccountId: "operator-1",
+          })
+        ).ok,
+      );
       const retry = await fixture.boardArchivePipeline.runDueCloses({
         now: fixture.holder.now,
       });
@@ -365,6 +390,11 @@ test("a validation failure keeps the session draining and a retry can still seal
         fixture.organizerStore.getBoardSessionForEvent(fixture.event.eventId)
           ?.status,
         "closed",
+      );
+      assert.equal(
+        fixture.organizerStore.getBoardSessionForEvent(fixture.event.eventId)
+          ?.archiveFailure,
+        null,
       );
       const stored = await fixture.archiveStore.readArchive(
         `board-archives/${session?.boardSessionId}/manifest.json`,
@@ -479,15 +509,33 @@ test("a close that crashed between archiving and sealing retries over the identi
       await fixture.boardArchivePipeline.runDueCloses({
         now: fixture.holder.now,
       });
-      assert.equal(
-        fixture.organizerStore.getBoardSessionForEvent(fixture.event.eventId)
-          ?.status,
-        "closing",
+      const failedSession = fixture.organizerStore.getBoardSessionForEvent(
+        fixture.event.eventId,
+      );
+      assert.equal(failedSession?.status, "archive_failed");
+      assert.equal(failedSession?.archiveFailure?.code, "seal_failed");
+      assert.ok(
+        await fixture.archiveStore.readArchive(
+          `board-archives/${failedSession?.boardSessionId}/manifest.json`,
+        ),
+        "the archive itself is intact",
       );
       fixture.organizerStore.markBoardSessionClosed = realSeal;
 
       // The retry regenerates byte-identical archive objects, so the
-      // immutable put accepts them and the session finally seals.
+      // immutable put accepts them and the session finally seals. The
+      // operator retry makes the session due without waiting for the
+      // automatic backoff.
+      assert.ok(
+        (
+          await fixture.organizerStore.retryBoardSessionArchive({
+            boardSessionId: /** @type {string} */ (
+              failedSession?.boardSessionId
+            ),
+            operatorAccountId: "operator-1",
+          })
+        ).ok,
+      );
       const retry = await fixture.boardArchivePipeline.runDueCloses({
         now: fixture.holder.now,
       });

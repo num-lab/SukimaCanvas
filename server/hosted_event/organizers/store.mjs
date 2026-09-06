@@ -167,11 +167,32 @@ function eventLifecycleState(event, now) {
  * The authoritative Board Session lifecycle advanced by durable background work.
  * `scheduled` before the event's start, `open` while it runs, `closing` while
  * accepted writes drain, `closed` once the session is sealed behind a Private
- * Board Archive, and `cancelled` when a future event is withdrawn. `closed` and
- * `cancelled` are terminal: a closed session can never be re-edited or
- * reopened, and further creation needs a new Board Session.
+ * Board Archive, and `cancelled` when a future event is withdrawn. A close
+ * attempt that cannot validate the final sequence or persist the archive moves
+ * the session to `archive_failed`: it admits no writes, shows no archived
+ * result, and stays there — visible and recoverable — until a retry (the
+ * pipeline's automatic backoff or an authorized Platform Operator) succeeds
+ * and seals it `closed`. `closed` and `cancelled` are terminal: a closed
+ * session can never be re-edited or reopened, and further creation needs a new
+ * Board Session.
  *
- * @typedef {"scheduled" | "open" | "closing" | "closed" | "cancelled"} BoardSessionStatus
+ * @typedef {"scheduled" | "open" | "closing" | "archive_failed" | "closed" | "cancelled"} BoardSessionStatus
+ */
+/**
+ * The durable failure context of a Board Session waiting for its archive: why
+ * the last close attempt failed (`code` is a deterministic failure code and
+ * `message` the internal detail — both are operator-console material and never
+ * render on organizer or participant surfaces), how many attempts have failed
+ * so far, and when the first and latest failures happened. Cleared when a
+ * retry finally seals the session.
+ *
+ * @typedef {{
+ *   code: string,
+ *   message: string,
+ *   attempts: number,
+ *   firstFailedAtMs: number,
+ *   lastFailedAtMs: number,
+ * }} StoredBoardSessionArchiveFailure
  */
 /**
  * @typedef {{
@@ -193,6 +214,7 @@ function eventLifecycleState(event, now) {
  *   archiveKey: string | null,
  *   archivedAtMs: number | null,
  *   archivedFinalSeq: number | null,
+ *   archiveFailure: StoredBoardSessionArchiveFailure | null,
  * }} StoredBoardSession
  */
 /**
@@ -399,6 +421,7 @@ function createFileOrganizerStore(options) {
     if (session.archivedFinalSeq === undefined) {
       session.archivedFinalSeq = null;
     }
+    if (session.archiveFailure === undefined) session.archiveFailure = null;
   }
 
   function ensureLoaded() {
@@ -1618,6 +1641,7 @@ function createFileOrganizerStore(options) {
       archiveKey: null,
       archivedAtMs: null,
       archivedFinalSeq: null,
+      archiveFailure: null,
     });
     reservation.status = "approved";
     reservation.decidedAtMs = now;
@@ -1742,14 +1766,14 @@ function createFileOrganizerStore(options) {
   }
 
   /**
-   * Board Sessions whose CLOSING drain window has elapsed and that are still
-   * waiting for the close pipeline to seal them (`closing` status, no archive
-   * yet), joined with the event board name the pipeline needs to reach the
-   * board. The list is a work queue read, not a mutation: it never changes
-   * state, so concurrent close attempts stay guarded by the store's own
-   * status transitions.
+   * Board Sessions the close pipeline should attempt now, joined with the
+   * event board name the pipeline needs to reach the board: sessions still in
+   * their `closing` drain window whose drain has elapsed, and `archive_failed`
+   * sessions whose automatic retry backoff has elapsed. The list is a work
+   * queue read, not a mutation: it never changes state, so concurrent close
+   * attempts stay guarded by the store's own status transitions.
    *
-   * @param {{now: number, closeDrainMs?: number}} input
+   * @param {{now: number, closeDrainMs?: number, archiveRetryMs?: number}} input
    * @returns {{boardSessionId: string, eventId: string, organizerId: string, boardName: string}[]}
    */
   function listBoardSessionsDueToClose(input) {
@@ -1760,11 +1784,28 @@ function createFileOrganizerStore(options) {
       Number.isFinite(input.closeDrainMs)
         ? Math.max(0, input.closeDrainMs)
         : 0;
+    const archiveRetryMs =
+      typeof input.archiveRetryMs === "number" &&
+      Number.isFinite(input.archiveRetryMs)
+        ? Math.max(0, input.archiveRetryMs)
+        : 0;
     /** @type {{boardSessionId: string, eventId: string, organizerId: string, boardName: string}[]} */
     const due = [];
     for (const session of boardSessionsById.values()) {
-      if (session.status !== "closing" || session.archiveKey !== null) continue;
-      if (now < session.endsAtMs + closeDrainMs) continue;
+      if (session.status === "closing") {
+        if (session.archiveKey !== null) continue;
+        if (now < session.endsAtMs + closeDrainMs) continue;
+      } else if (session.status === "archive_failed") {
+        // Automatic recovery: a failed archive retries after its backoff, so
+        // a transient storage fault heals without human toil. A backoff of
+        // zero disables the automatic retry entirely; an authorized operator
+        // retry resets the session to `closing` instead and never waits.
+        const failure = session.archiveFailure;
+        if (!failure || archiveRetryMs <= 0) continue;
+        if (now < failure.lastFailedAtMs + archiveRetryMs) continue;
+      } else {
+        continue;
+      }
       const event = eventsById.get(session.eventId);
       if (!event) continue;
       due.push({
@@ -1778,13 +1819,13 @@ function createFileOrganizerStore(options) {
   }
 
   /**
-   * Seals a draining Board Session CLOSED after its Private Board Archive
-   * succeeded: the terminal transition records the archive's object-storage
-   * key and the validated final sequence, and is guarded so only a `closing`
-   * session can be sealed (a closed or cancelled session is refused, and a
-   * session that was never archived is never marked closed). A session sealed
-   * here can never be re-edited or reopened; continued creation needs a new
-   * Board Session.
+   * Seals a draining or archive-failed Board Session CLOSED after its Private
+   * Board Archive succeeded: the terminal transition records the archive's
+   * object-storage key and the validated final sequence, and is guarded so
+   * only a `closing` or `archive_failed` session can be sealed (a closed or
+   * cancelled session is refused, and a session that was never archived is
+   * never marked closed). A session sealed here can never be re-edited or
+   * reopened; continued creation needs a new Board Session.
    *
    * @param {{boardSessionId: string, archiveKey: string, finalSeq: number, archivedAtMs: number}} input
    * @returns {Promise<{ok: true} | {ok: false, reason: "not_found" | "not_closing" | "invalid_archive"}>}
@@ -1793,7 +1834,7 @@ function createFileOrganizerStore(options) {
     ensureLoaded();
     const session = boardSessionsById.get(String(input.boardSessionId || ""));
     if (!session) return { ok: false, reason: "not_found" };
-    if (session.status !== "closing") {
+    if (session.status !== "closing" && session.status !== "archive_failed") {
       return { ok: false, reason: "not_closing" };
     }
     const archiveKey = String(input.archiveKey || "");
@@ -1806,6 +1847,7 @@ function createFileOrganizerStore(options) {
     session.archiveKey = archiveKey;
     session.archivedAtMs = input.archivedAtMs;
     session.archivedFinalSeq = finalSeq;
+    session.archiveFailure = null;
     recordAudit({
       actorAccountId: "",
       actorKind: "system",
@@ -1819,17 +1861,53 @@ function createFileOrganizerStore(options) {
   }
 
   /**
-   * Records one observable close-pipeline failure against a still-draining
-   * Board Session. The session stays `closing` — a failed archive is never
-   * dressed up as a closed one — and the next close attempt retries it.
+   * The longest failure detail kept on a session record. Close failures can
+   * carry storage-layer text; the store bounds it so one hostile error cannot
+   * grow the durable state unboundedly. The full error still goes to the
+   * structured log.
+   */
+  const MAX_ARCHIVE_FAILURE_MESSAGE_LENGTH = 500;
+
+  /**
+   * Records one failed close attempt against a Board Session that was trying
+   * to archive. The first failure transitions the session from `closing` to
+   * `archive_failed` — an observable, recoverable state that admits no writes
+   * and never displays an archived result; a failing retry attempt keeps the
+   * session in `archive_failed` and refreshes the failure context. Each failed
+   * attempt appends its own Change Audit record (automatic retries are bounded
+   * by the pipeline's backoff, so the trail cannot spin). Unknown or
+   * non-waiting sessions are ignored: a sealed or cancelled session can never
+   * fail its way back into the pipeline.
    *
-   * @param {{boardSessionId: string}} input
+   * @param {{boardSessionId: string, code?: string, message?: string}} input
    * @returns {Promise<void>}
    */
   async function recordBoardSessionArchiveFailed(input) {
     ensureLoaded();
     const session = boardSessionsById.get(String(input.boardSessionId || ""));
-    if (!session || session.status !== "closing") return;
+    if (
+      !session ||
+      (session.status !== "closing" && session.status !== "archive_failed")
+    ) {
+      return;
+    }
+    const now = clock();
+    const code =
+      clampString(String(input.code || "internal"), 64) || "internal";
+    const message = clampString(
+      String(input.message || ""),
+      MAX_ARCHIVE_FAILURE_MESSAGE_LENGTH,
+    );
+    const previous = session.archiveFailure;
+    session.archiveFailure = {
+      code,
+      message,
+      attempts: (previous?.attempts || 0) + 1,
+      firstFailedAtMs: previous?.firstFailedAtMs ?? now,
+      lastFailedAtMs: now,
+    };
+    const entered = session.status !== "archive_failed";
+    session.status = "archive_failed";
     recordAudit({
       actorAccountId: "",
       actorKind: "system",
@@ -1838,7 +1916,47 @@ function createFileOrganizerStore(options) {
       subjectId: session.boardSessionId,
       organizerId: session.organizerId,
     });
+    if (entered) {
+      logger.warn("hosted.board_session_archive_failed_entered", {
+        board_session: session.boardSessionId,
+        failure_code: code,
+        attempts: session.archiveFailure.attempts,
+      });
+    }
     await enqueueWrite(persistNow);
+  }
+
+  /**
+   * A Platform Operator's authorized manual retry: moves an `archive_failed`
+   * Board Session back to `closing` so the very next close pass picks it up
+   * immediately, without waiting for the automatic retry backoff. The failure
+   * context stays on the session as retry context until a retry either seals
+   * it `closed` (clearing it) or fails again (refreshing it), so attempts and
+   * history are never lost across retries. Guarded by the current status, so
+   * double submissions, racing operators, and retries of sessions that are no
+   * longer failed are deterministic refusals — never duplicate advancement.
+   *
+   * @param {{boardSessionId: string, operatorAccountId: string}} input
+   * @returns {Promise<{ok: true} | {ok: false, reason: "not_found" | "not_failed"}>}
+   */
+  async function retryBoardSessionArchive(input) {
+    ensureLoaded();
+    const session = boardSessionsById.get(String(input.boardSessionId || ""));
+    if (!session) return { ok: false, reason: "not_found" };
+    if (session.status !== "archive_failed") {
+      return { ok: false, reason: "not_failed" };
+    }
+    session.status = "closing";
+    recordAudit({
+      actorAccountId: String(input.operatorAccountId || ""),
+      actorKind: "operator",
+      action: "board_session.archive_retry_requested",
+      subjectType: "board_session",
+      subjectId: session.boardSessionId,
+      organizerId: session.organizerId,
+    });
+    await enqueueWrite(persistNow);
+    return { ok: true };
   }
 
   /**
@@ -2382,6 +2500,39 @@ function createFileOrganizerStore(options) {
   }
 
   /**
+   * The Board Session behind an internal id, or null. Operator-console
+   * surface only: internal Board Session identifiers never appear on public
+   * or participant-facing URLs.
+   *
+   * @param {string} boardSessionId
+   * @returns {StoredBoardSession | null}
+   */
+  function getBoardSessionById(boardSessionId) {
+    ensureLoaded();
+    return boardSessionsById.get(String(boardSessionId || "")) || null;
+  }
+
+  /**
+   * The Platform Operator console's archive-failure work list: every Board
+   * Session currently waiting in `archive_failed`, oldest failure first, with
+   * the failure context and the identifiers the console needs to join event
+   * and organizer names. A read-only projection — retry authorization and
+   * state changes stay behind the dedicated retry method.
+   *
+   * @returns {StoredBoardSession[]}
+   */
+  function listArchiveFailedBoardSessions() {
+    ensureLoaded();
+    return [...boardSessionsById.values()]
+      .filter((session) => session.status === "archive_failed")
+      .sort(
+        (left, right) =>
+          (left.archiveFailure?.lastFailedAtMs || 0) -
+          (right.archiveFailure?.lastFailedAtMs || 0),
+      );
+  }
+
+  /**
    * Mints (or replaces) the event's shared Access Code and returns the raw
    * value exactly once. Only the SHA-256 digest is persisted, so a later read
    * can never reveal the code; rotating simply stops the previous digest from
@@ -2594,6 +2745,9 @@ function createFileOrganizerStore(options) {
     listBoardSessionsDueToClose,
     markBoardSessionClosed,
     recordBoardSessionArchiveFailed,
+    retryBoardSessionArchive,
+    listArchiveFailedBoardSessions,
+    getBoardSessionById,
     submitChangeRequest,
     approveChangeRequest,
     rejectChangeRequest,

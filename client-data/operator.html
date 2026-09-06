@@ -72,6 +72,35 @@
         {{else}}
         <p class="hosted-account-note">{{hostedTranslations.hosted_operator_queue_empty}}</p>
         {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_operator_archive_failures_title}}</h2>
+        {{#if hostedOperatorHasArchiveFailures}}
+        <ul class="hosted-operator-queue">
+          {{#hostedOperatorArchiveFailures}}
+          <li class="hosted-operator-queue-item">
+            <div class="hosted-operator-queue-meta">
+              <span class="hosted-operator-queue-name">{{eventName}}</span>
+              <span>{{../hostedTranslations.hosted_operator_reservation_organizer}}: {{organizerName}}</span>
+              <span>{{../hostedTranslations.hosted_operator_archive_failures_reason}}: {{failureCode}}</span>
+              <span>{{../hostedTranslations.hosted_operator_archive_failures_attempts}}: {{failureAttempts}}</span>
+              <span>{{../hostedTranslations.hosted_operator_archive_failures_last_attempt}}: {{lastFailedAt}}</span>
+              {{#if failureMessage}}
+              <span>{{../hostedTranslations.hosted_operator_archive_failures_detail}}: {{failureMessage}}</span>
+              {{/if}}
+            </div>
+            <form method="post" action="operator/board-sessions/{{boardSessionId}}/archive-retry">
+              <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+              <button type="submit" class="hosted-submit">{{../hostedTranslations.hosted_operator_archive_retry}}</button>
+            </form>
+          </li>
+          {{/hostedOperatorArchiveFailures}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_operator_archive_failures_empty}}</p>
+        {{/if}}
+        {{#if hostedOperatorArchiveNotice}}
+        <p class="hosted-account-note" role="status">{{hostedOperatorArchiveNotice}}</p>
+        {{/if}}
         {{/if}}
       </section>
     </main>

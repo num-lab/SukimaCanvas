@@ -298,6 +298,7 @@ function createHostedEventModule(config, paths) {
     integrationStore,
     limiter,
     operatorEmails,
+    advanceEventLifecycle: refreshEventLifecycle,
     templates: {
       organizerApply: new HostedPageTemplate(
         paths.organizerApplyTemplatePath,

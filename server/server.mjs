@@ -36,6 +36,7 @@ import {
   serveOperatorApproveApplication,
   serveOperatorApproveChange,
   serveOperatorApproveReservation,
+  serveOperatorArchiveRetry,
   serveOperatorChange,
   serveOperatorChanges,
   serveOperatorConsole,
@@ -302,6 +303,11 @@ function createWhiteboardHttpHandler() {
       "hosted_integration_entry_grant_create",
     ),
     route("/operator", serveOperatorConsole, "hosted_operator"),
+    route(
+      "/operator/board-sessions/{boardSessionId}/archive-retry",
+      serveOperatorArchiveRetry,
+      "hosted_operator_archive_retry",
+    ),
     route(
       "/operator/reservations",
       serveOperatorReservations,

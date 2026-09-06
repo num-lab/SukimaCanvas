@@ -266,6 +266,18 @@ export const HOSTED_BOARD_SESSION_CLOSE_DRAIN_MS = parseIntegerEnv(
 );
 
 /**
+ * Backoff between automatic retries of a Board Session whose archive close
+ * failed (`ARCHIVE_FAILED`). The failure stays observable the whole time and a
+ * Platform Operator can retry immediately from the operator console; the
+ * backoff only paces the durable background recovery. `0` disables automatic
+ * retries (manual operator retries still work).
+ */
+export const HOSTED_BOARD_SESSION_ARCHIVE_RETRY_MS = parseIntegerEnv(
+  "WBO_HOSTED_BOARD_SESSION_ARCHIVE_RETRY_MS",
+  15 * 60 * 1000,
+);
+
+/**
  * How often the durable lifecycle poker advances Board Sessions with no active
  * reader. The persisted times plus the service clock are the source of truth;
  * the poke only triggers a catch-up. `0` disables the background poke (e.g. in

@@ -241,6 +241,14 @@ const turnstileVerifications = meter.createCounter(
     unit: "{verification}",
   },
 );
+const hostedBoardArchiveCloses = meter.createCounter(
+  "wbo.hosted.board_archive",
+  {
+    description:
+      'Count of hosted Board Session archive close attempts, labeled by "wbo.hosted.board_archive.outcome"; error.type carries the deterministic failure code for failed attempts.',
+    unit: "{close}",
+  },
+);
 const loadedBoardsGauge = meter.createObservableGauge("wbo.board.loaded", {
   description: "Current number of board instances loaded in server memory.",
   unit: "{board}",
@@ -837,6 +845,24 @@ function recordTurnstileVerification(errorType) {
 }
 
 /**
+ * Records one Board Session archive close attempt outcome: the session was
+ * either sealed behind its Private Board Archive ("archived") or the attempt
+ * failed with a deterministic failure code, keeping the session recoverable.
+ *
+ * @param {"archived" | "failed"} outcome
+ * @param {string} [failureCode] deterministic failure code for failed attempts
+ * @returns {void}
+ */
+function recordBoardArchiveClose(outcome, failureCode) {
+  /** @type {{[key: string]: string}} */
+  const attributes = { "wbo.hosted.board_archive.outcome": outcome };
+  if (outcome === "failed" && typeof failureCode === "string" && failureCode) {
+    attributes[ATTR_ERROR_TYPE] = failureCode;
+  }
+  hostedBoardArchiveCloses.add(1, attributes);
+}
+
+/**
  * @param {string} operation
  * @param {string | undefined} boardName
  * @param {number} durationSeconds
@@ -939,6 +965,7 @@ const logger = {
 };
 
 const observabilityMetrics = {
+  recordBoardArchiveClose,
   recordBoardMessage,
   changeHttpActiveRequests,
   recordBoardOperationDuration,
