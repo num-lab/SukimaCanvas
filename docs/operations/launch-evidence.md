@@ -1,0 +1,122 @@
+# Hosted Event Service — Launch Acceptance Evidence
+
+Recorded evidence for the pre-launch acceptance gates of issue 23. The
+procedures live in [runbook.md](./runbook.md). Each row records what was
+run, when, and the measured result, so the next drill or regression has a
+baseline to compare against.
+
+Recorded: 2026-09-06, on the `develop` branch (commit a1ba710 + issue 23
+changes), local development machine (Apple Silicon, macOS). Numbers are
+baselines for future comparisons, not SLA guarantees.
+
+## 1. Recovery drill (RPO / RTO / consistency)
+
+Automated drill: `node --test test-node/hosted_recovery_drill.test.js`
+(passing; runs in the standard Node suite).
+
+What the drill does — against the real composed subsystems (admission,
+ledger fsync, close pipeline, notice queue, webhook outbox):
+
+1. Accepts a persistent board write through the real admission gate and the
+   ledger fsync boundary; observes the sequenced confirmation.
+2. Fails an archive close (object-storage fault) into the durable
+   `archive_failed` state; queues `event.opened` + `archive.failed` in the
+   webhook outbox; queues an upcoming-start notice whose first delivery
+   fails (vendor outage).
+3. **Crashes**: drops every in-memory object and recomposes every store,
+   pipeline, and the ledger from the data directory alone.
+
+Measured result:
+
+| Check | Result |
+| --- | --- |
+| RPO | **0 confirmed writes lost** — the write confirmed to its sender before the crash is present with identical `seq` and `acceptedAtMs` after the restart. The ledger fsync gates confirmation, so the measured loss window is zero (budget: 5 s). |
+| RTO | Recompose from disk + finish the archive + drain the webhook outbox + deliver the notice completes in **< 1 s wall clock** in the automated drill (budget: 15 min). The restore drill additionally proves the backup path end to end; the deployment-target restore copy time is added to the budget at launch. Recovery is automatic; no manual state surgery. |
+| Task consistency | `archive_failed` session visible to the restarted process with its failure context, due again on the retry backoff; after the fault is removed the archive seals with `finalSeq` agreeing between manifest, ledger, and session. |
+| Outbox consistency | Webhook events still pending after the restart and delivered afterwards. |
+| Notice consistency | The retrying notice survives and delivers through the restarted mail adapter. |
+| Permission boundaries | Organizer Owner role, live Event Membership, and Event Ban all unchanged after the restart; admission decisions answered from durable state alone (`hosted_recovery_drill.test.js` second test). |
+| Restore/PITR | A crash-consistent backup (plain recursive copy) plus re-shipped ledger tails rebuilds every accepted write — including one accepted after the backup — and the restored state drives a complete close with `finalSeq` 2 and a manifest ledger hash matching the re-shipped file (`hosted_recovery_drill.test.js` restore drill). |
+
+## 2. Capacity commitments and rejection behavior
+
+Automated proof: `node --test test-node/hosted_capacity_limits.test.js`
+(passing), plus `test-node/hosted_reservation_store.test.js` (at-limit
+approval, concurrent approvals never oversell, non-overlapping windows
+independent) and the reservation route validation for the 1–50 seat band.
+
+| Commitment | Evidence |
+| --- | --- |
+| Exactly 20 overlapping Board Sessions approved | Store test approves 20 overlapping sessions at the limit; the 21st is refused with `reason: "capacity"` and the would-be peak `maxSessions: 21`. |
+| Exactly 1,000 committed Participant Seats approved | The same test commits 20 × 50 = 1,000 seats; a further 1-seat overlap is refused with `maxSeats: 1001`. |
+| 1–50 seats per session | Route validation refuses 0 or > 50 with `hosted_reservation_error_seats`; 50 seats per session approved at the store. |
+| Capacity signal | `wbo.hosted.capacity.board_sessions_active` / `wbo.hosted.capacity.seats_committed` gauges track live sessions and committed seats on the lifecycle pass (proven in the same test). |
+
+## 3. Benchmark baseline
+
+`npm run bench` (all scenarios, this machine, 2026-09-06):
+
+| Scenario | Result |
+| --- | --- |
+| e2e: open 6,000-item board, peer-visible erase | avg 396.9 ms (388.5 / 395.5 / 406.6); 13.7 MiB transient |
+| load: load 32,768-item board (19.2 MiB) | avg 88.3 ms (82.8 / 85.9 / 96.1); 25.9 MiB transient |
+| persist: 128 pencil appends + 128 transforms on the 32,768-item board (19.1 MiB written) | avg 48.8 ms (46.4 / 49.6 / 50.5); 21.8 MiB transient |
+| broadcast: 20,000 mixed socket broadcasts | avg 121.3 ms (117.9 / 118.1 / 127.9); 69.9 MiB transient |
+
+No hot-path code changed in this issue; these numbers are the recorded
+baseline for future regression comparison. Per the project convention,
+`npm run bench` must be re-run before/after any change touching live
+mutation validation, persistence, replay, broadcast fan-out, archive, or
+export paths. **Gap:** the agreed benchmark suite has no archive-close or
+export-render scenario yet (recorded as an open item in §7); until then
+those two hot paths carry no benchmark regression guard.
+
+## 4. Operational signals
+
+Inventory and minimum alert set: `docs/operations/runbook.md` §5. Coverage
+spans capacity (the two new capacity gauges), connections (socket gauges),
+saves (board operation durations), archive/export/mail/webhook failures
+(counters with deterministic failure codes), and HTTP metrics. Alert
+hygiene rules (no passwords, sessions, tokens, Access Codes, credentials,
+Entry Grants, emails, or canvas content) are documented there; the
+account/credential/webhook test suites assert the enumeration-safe and
+one-time-reveal behaviors that keep secrets out of responses and logs.
+
+## 5. Deployment constraints and source mapping
+
+- Single active application instance is the deployment constraint;
+  documented in `docs/operations/runbook.md` §6. Every durable subsystem
+  (state, queues, ledgers, archives) recovers from disk alone — the
+  recovery drill is the standing proof that nothing depends on local
+  process state.
+- The `/source` page serves the immutable, version-pinned Corresponding
+  Source mapping and fails closed (503) when the deployment mapping is
+  missing or a rolling version label is pinned (tested in
+  `test-node/hosted_runtime.test.js` / server route tests). Verify
+  `/source` after every deploy.
+
+## 6. Gate status at recording time
+
+| Gate | Command | Status |
+| --- | --- | --- |
+| Node suite (incl. recovery drill + capacity) | `npm run test-node` | 703 passing, 0 failing |
+| Browser suite | `npx playwright test` | 86 passing |
+| Lint | `npm run lint` | clean |
+| Typecheck | `npm run typecheck` | clean |
+| Benchmarks | `npm run bench` | recorded in §3 |
+
+## 7. Open items (blocking launch, not this evidence)
+
+1. **Legal review:** Terms of Service and Privacy Policy for mainland
+   China must be reviewed and approved by legal counsel. No code change
+   in this repository substitutes for that review.
+2. Full-scale load validation on the production-shaped target: run the
+   documented capacity procedure (runbook §4) with 20 concurrent live
+   sessions / 1,000 provisioned seats on the target infrastructure and
+   record the measured headroom here before opening registrations.
+3. Benchmark scenarios for the archive-close and export-render hot paths
+   (the agreed suite covers e2e/load/persist/broadcast only).
+4. PostgreSQL and S3-compatible object storage adapter selection; the
+   backup/PITR procedures map onto them per runbook §2.
+5. Legal review of Terms of Service and Privacy Policy (external,
+   required — listed here alongside item 1's launch-blocking review).

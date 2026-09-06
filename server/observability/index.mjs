@@ -144,6 +144,8 @@ const runtimeState = {
   loadedBoards: 0,
   connectedUsers: 0,
   activeSocketConnections: 0,
+  hostedActiveSessions: 0,
+  hostedCommittedSeats: 0,
 };
 
 const httpServerRequestDuration = meter.createHistogram(
@@ -300,6 +302,22 @@ const connectedUsersGauge = meter.createObservableGauge(
     unit: "{user}",
   },
 );
+const hostedActiveSessionsGauge = meter.createObservableGauge(
+  "wbo.hosted.capacity.board_sessions_active",
+  {
+    description:
+      "Current number of live (open or draining) hosted Board Sessions against the confirmed 20-session platform limit.",
+    unit: "{session}",
+  },
+);
+const hostedCommittedSeatsGauge = meter.createObservableGauge(
+  "wbo.hosted.capacity.seats_committed",
+  {
+    description:
+      "Current number of Participant Seats committed by live hosted Board Sessions against the confirmed 1,000-seat platform limit.",
+    unit: "{seat}",
+  },
+);
 loadedBoardsGauge.addCallback(function observeLoadedBoards(observer) {
   observer.observe(runtimeState.loadedBoards);
 });
@@ -310,6 +328,12 @@ activeSocketConnectionsGauge.addCallback(
 );
 connectedUsersGauge.addCallback(function observeConnectedUsers(observer) {
   observer.observe(runtimeState.connectedUsers);
+});
+hostedActiveSessionsGauge.addCallback(function observeActiveSessions(observer) {
+  observer.observe(runtimeState.hostedActiveSessions);
+});
+hostedCommittedSeatsGauge.addCallback(function observeCommittedSeats(observer) {
+  observer.observe(runtimeState.hostedCommittedSeats);
 });
 
 /**
@@ -1017,6 +1041,19 @@ function recordBoardOperationDuration(
 }
 
 /**
+ * Publishes the hosted platform's current capacity usage — live Board
+ * Sessions and their committed Participant Seats — so capacity alerts read
+ * directly against the confirmed 20-session / 1,000-seat limits.
+ *
+ * @param {{activeSessions: number, committedSeats: number}} usage
+ * @returns {void}
+ */
+function setHostedCapacityUsage(usage) {
+  runtimeState.hostedActiveSessions = usage.activeSessions;
+  runtimeState.hostedCommittedSeats = usage.committedSeats;
+}
+
+/**
  * @param {number} value
  * @returns {void}
  */
@@ -1095,6 +1132,7 @@ const observabilityMetrics = {
   recordBoardExport,
   recordWebhookDelivery,
   recordOutcomePurge,
+  setHostedCapacityUsage,
   recordHistoricalImport,
   recordNoticeDelivery,
   recordBoardMessage,

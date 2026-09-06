@@ -37,7 +37,7 @@ import { createReservationRoutes } from "./reservations/routes.mjs";
 
 /** @import { HttpRequest, HttpResponse, ServerConfig } from "../../types/server-runtime.d.ts" */
 
-const { logger } = observability;
+const { logger, metrics } = observability;
 
 const HOSTED_LANGUAGES = ["en", "zh-CN"];
 const ROLLING_VERSION_LABELS = new Set([
@@ -336,6 +336,13 @@ function createHostedEventModule(config, paths) {
   const refreshEventLifecycle = async () => {
     const now = serviceClock();
     await organizerStore.advanceLifecycle({ now, closeDrainMs });
+    // The capacity signal rides the same durable pass: operators read live
+    // sessions and committed seats directly against the platform limits.
+    try {
+      metrics.setHostedCapacityUsage(organizerStore.readCapacityUsage());
+    } catch (error) {
+      logger.error("hosted.capacity_signal_failed", { error });
+    }
     await boardArchivePipeline.runDueCloses({ now, closeDrainMs });
     await outcomeRetentionPipeline.runDueOutcomePurges({ now });
     await webhookPipeline.deriveLifecycleEvents();

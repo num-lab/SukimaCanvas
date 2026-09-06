@@ -31,6 +31,15 @@ Triage uses the default canonical labels: `needs-triage`, `needs-info`, `ready-f
 
 This is a single-context repo using root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
 
+### Operations
+
+Backup/PITR and recovery procedures, capacity commitments, alert hygiene,
+and the deployment constraints live in `docs/operations/runbook.md`; the
+recorded launch evidence (RPO/RTO drill, capacity rejection proofs,
+benchmark baselines, open items) lives in
+`docs/operations/launch-evidence.md`. Update both when the durability
+contract, capacity limits, or metric inventory change.
+
 ## source of truth
 
 Read this section as the normal flow of a board page and a board write. Use

@@ -3010,6 +3010,25 @@ function createFileOrganizerStore(options) {
   }
 
   /**
+   * The operator-facing capacity signal: how many Board Sessions are live
+   * (open or draining) and how many Participant Seats they have committed,
+   * against the confirmed platform limits (20 sessions / 1,000 seats).
+   *
+   * @returns {{activeSessions: number, committedSeats: number}}
+   */
+  function readCapacityUsage() {
+    ensureLoaded();
+    let activeSessions = 0;
+    let committedSeats = 0;
+    for (const session of boardSessionsById.values()) {
+      if (session.status !== "open" && session.status !== "closing") continue;
+      activeSessions += 1;
+      committedSeats += session.seats;
+    }
+    return { activeSessions, committedSeats };
+  }
+
+  /**
    * Every Board Session, oldest first. The webhook pipeline derives its
    * lifecycle events from this durable state, so a full read-only scan is
    * the derivation surface; per-kind dedupe keys make repeated scans no-ops.
@@ -3262,6 +3281,7 @@ function createFileOrganizerStore(options) {
     retryBoardSessionArchive,
     listArchiveFailedBoardSessions,
     listBoardSessions,
+    readCapacityUsage,
     getBoardSessionById,
     submitChangeRequest,
     approveChangeRequest,
