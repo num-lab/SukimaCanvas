@@ -36,6 +36,8 @@
     "bench:load": "npm run bench -- load",
     "bench:persist": "npm run bench -- persist",
     "bench:broadcast": "npm run bench -- broadcast",
+    "bench:archive": "npm run bench -- archive",
+    "bench:export": "npm run bench -- export",
     "profile": "node ./scripts/profile-benchmark-server.mjs",
     "generateload": "node ./scripts/generateload.mjs",
     "lint": "biome check . --assist-enabled=false --error-on-warnings",

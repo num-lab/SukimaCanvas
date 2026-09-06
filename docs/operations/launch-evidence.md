@@ -6,8 +6,10 @@ run, when, and the measured result, so the next drill or regression has a
 baseline to compare against.
 
 Recorded: 2026-09-06, on the `develop` branch (commit a1ba710 + issue 23
-changes), local development machine (Apple Silicon, macOS). Numbers are
-baselines for future comparisons, not SLA guarantees.
+changes), local development machine (Apple Silicon, macOS). §3 was
+re-recorded the same day on commit 4157ff7 plus the archive and export
+benchmark scenarios. Numbers are baselines for future comparisons, not SLA
+guarantees.
 
 ## 1. Recovery drill (RPO / RTO / consistency)
 
@@ -58,18 +60,55 @@ independent) and the reservation route validation for the 1–50 seat band.
 
 | Scenario | Result |
 | --- | --- |
-| e2e: open 6,000-item board, peer-visible erase | avg 396.9 ms (388.5 / 395.5 / 406.6); 13.7 MiB transient |
-| load: load 32,768-item board (19.2 MiB) | avg 88.3 ms (82.8 / 85.9 / 96.1); 25.9 MiB transient |
-| persist: 128 pencil appends + 128 transforms on the 32,768-item board (19.1 MiB written) | avg 48.8 ms (46.4 / 49.6 / 50.5); 21.8 MiB transient |
-| broadcast: 20,000 mixed socket broadcasts | avg 121.3 ms (117.9 / 118.1 / 127.9); 69.9 MiB transient |
+| e2e: open 6,000-item board, peer-visible erase | avg 392.1 ms (369.4 / 370.5 / 436.3); 13.8 MiB transient |
+| load: load 32,768-item board (19.2 MiB) | avg 90.5 ms (83.2 / 89.9 / 98.6); 25.5 MiB transient |
+| persist: 128 pencil appends + 128 transforms on the 32,768-item board (19.1 MiB written) | avg 47.8 ms (45.6 / 48.3 / 49.6); 21.4 MiB transient |
+| broadcast: 20,000 mixed socket broadcasts | avg 126.6 ms (122.6 / 124.3 / 132.9); 70.7 MiB transient |
+| archive: close a 32,768-item Board Session carrying an 8,320-entry ledger (archives 19.1 MiB canvas + 2.0 MiB ledger) | avg 105.6 ms (101.6 / 106.4 / 108.8); 79.2 MiB transient |
+| export: render a 512-item archive to a 7211x3096 PNG (0.4 MiB) | avg 2,356.9 ms (2,319.7 / 2,338.7 / 2,412.3); 7.4 MiB transient |
 
-No hot-path code changed in this issue; these numbers are the recorded
-baseline for future regression comparison. Per the project convention,
-`npm run bench` must be re-run before/after any change touching live
-mutation validation, persistence, replay, broadcast fan-out, archive, or
-export paths. **Gap:** the agreed benchmark suite has no archive-close or
-export-render scenario yet (recorded as an open item in §7); until then
-those two hot paths carry no benchmark regression guard.
+The `archive` and `export` scenarios (`scripts/benchmark-hosted-outcomes.mjs`)
+drive the real composed pipelines against real file stores, so both hot
+paths now carry a regression guard: `archive` seals the write boundary,
+settles the snapshot at the final authoritative sequence, exports and
+hashes the accepted-mutation ledger, writes the three immutable archive
+objects, and seals the session; `export` reads the sealed archive, verifies
+the canvas against its manifest integrity hash, renders the sanitized PNG,
+and stores the result. A sample that fails to archive or render fails the
+run instead of reporting a number.
+
+These numbers are the recorded baseline for future regression comparison.
+Per the project convention, `npm run bench` must be re-run before/after any
+change touching live mutation validation, persistence, replay, broadcast
+fan-out, archive, or export paths.
+
+### Image Export cost, and what it means operationally
+
+The `export` scenario deliberately renders a small 512-item archive so
+`npm run bench` stays quick. Export cost scales with the archived item
+count, and at capacity it is large. Measured on this machine with
+`WBO_BENCH_EXPORT_ITEMS=<n> npm run bench -- export`
+(raise `WBO_BENCH_TIMEOUT_MS` for the large runs):
+
+| Archived board | Rendered output | Export pass |
+| --- | --- | --- |
+| 512 items | 7211x3096, 0.4 MiB PNG | avg 2.4 s |
+| 32,768 items (the `MAX_ITEM_COUNT` cap) | 8192x7844, 18.6 MiB PNG | avg 235.4 s (174.7 / 263.8 / 267.7) |
+
+Two consequences, both covered by open item 3 in §7:
+
+1. The rasterizer call in `renderArchivePng` is synchronous, so it holds
+   the event loop for the whole render — measured at 649 ms of event-loop
+   lag for a 652 ms render, with a 50 ms heartbeat missing more than half
+   its ticks. On the single active application instance that stalls live
+   Board Sessions, Socket.IO traffic, HTTP requests, and the lifecycle
+   pass for the duration of the render.
+2. `runDueExports` settles due jobs one at a time, so several large
+   exports queue behind each other and add up.
+
+Neither is a durability problem — jobs stay durable, idempotent, and
+retryable — but a full-capacity export blocking a shared instance for
+minutes is a capacity decision that belongs on the launch checklist.
 
 ## 4. Operational signals
 
@@ -101,9 +140,21 @@ one-time-reveal behaviors that keep secrets out of responses and logs.
 | --- | --- | --- |
 | Node suite (incl. recovery drill + capacity) | `npm run test-node` | 703 passing, 0 failing |
 | Browser suite | `npx playwright test` | 86 passing |
-| Lint | `npm run lint` | clean |
+| Lint | `npm run lint` | **failing** on 7 files (see below) |
 | Typecheck | `npm run typecheck` | clean |
 | Benchmarks | `npm run bench` | recorded in §3 |
+
+Re-checked 2026-09-06 on commit 4157ff7: `npm run lint` fails with
+formatter diffs on `server/hosted_event/notifications/notices.mjs`,
+`server/hosted_event/notifications/service.mjs`,
+`server/hosted_event/organizers/routes.mjs`,
+`server/hosted_event/webhooks/store.mjs`,
+`test-node/hosted_capacity_limits.test.js`,
+`test-node/hosted_recovery_drill.test.js`, and
+`test-node/hosted_webhooks.test.js`. They are formatting only — no rule
+violations — and `npm run format` resolves them. CI runs only on `master`
+and pull requests into it, so `develop` never exercised this gate; the
+merge to `master` will fail until the sweep lands.
 
 ## 7. Open items (blocking launch, not this evidence)
 
@@ -114,8 +165,12 @@ one-time-reveal behaviors that keep secrets out of responses and logs.
    documented capacity procedure (runbook §4) with 20 concurrent live
    sessions / 1,000 provisioned seats on the target infrastructure and
    record the measured headroom here before opening registrations.
-3. Benchmark scenarios for the archive-close and export-render hot paths
-   (the agreed suite covers e2e/load/persist/broadcast only).
+3. **Image Export blocks the shared instance.** A full-capacity export
+   holds the event loop for minutes (§3). Decide and record the mitigation
+   before opening registrations: an asynchronous rasterizer call, a worker
+   thread or separate process for the render, a smaller edge cap, or a
+   documented limit on archive size for export. The measurement, not the
+   fix, is what this evidence records.
 4. PostgreSQL and S3-compatible object storage adapter selection; the
    backup/PITR procedures map onto them per runbook §2.
 5. Legal review of Terms of Service and Privacy Policy (external,

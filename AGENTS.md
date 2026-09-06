@@ -15,7 +15,7 @@ agents changing the repository.
 - Local baseline: `npm install`, then `npm test`.
 - `npm test` runs the Node suite, Playwright suite, and Biome lint. It does not run typecheck or benchmarks.
 - Use `npm run typecheck` for the unified JS typecheck.
-- Use `npm run bench` before and after changes, only for suspected hot-path, persistence, replay, or broadcast-throughput changes.
+- Use `npm run bench` before and after changes, only for suspected hot-path, persistence, replay, broadcast-throughput, archive-close, or image-export changes.
 
 ## Agent skills
 
@@ -632,9 +632,11 @@ Use [test-node](./test-node) for Node tests and
 [playwright.config.ts](./playwright.config.ts) for browser integration tests.
 Server benchmarks are in [benchmark-server.mjs](./scripts/benchmark-server.mjs),
 profiling starts from
-[profile-benchmark-server.mjs](./scripts/profile-benchmark-server.mjs), and the
+[profile-benchmark-server.mjs](./scripts/profile-benchmark-server.mjs), the
 peer-visible erase benchmark is
-[benchmark-peer-visible-erase.mjs](./scripts/benchmark-peer-visible-erase.mjs).
+[benchmark-peer-visible-erase.mjs](./scripts/benchmark-peer-visible-erase.mjs),
+and the archive-close and image-export scenarios are
+[benchmark-hosted-outcomes.mjs](./scripts/benchmark-hosted-outcomes.mjs).
 
 ## wire socket protocol
 
@@ -912,8 +914,11 @@ When touching hot paths:
 - Use `withExpensiveActiveSpan` or a span around a batch for high-volume work.
   Do not start `withActiveSpan` per item.
 - Run `npm run bench` before and after suspected hot-path changes. Use
-  `npm run bench -- <e2e|load|persist|broadcast>` or the matching shortcut when
-  one scenario is enough.
+  `npm run bench -- <e2e|load|persist|broadcast|archive|export>` or the matching
+  shortcut when one scenario is enough.
+- The `export` scenario renders a 512-item archive by default because the raster
+  dominates it. Raise `WBO_BENCH_EXPORT_ITEMS` (with `WBO_BENCH_TIMEOUT_MS`) to
+  measure a larger board.
 
 ## frontend rules
 
@@ -962,8 +967,9 @@ When touching hot paths:
 - Format: `npm run format`.
 - Full local gate: `npm test`.
 - Benchmarks: `npm run bench`, `npm run bench:load`, `npm run bench:persist`,
-  `npm run bench:broadcast`, `npm run bench:e2e`.
-- Profiling: `npm run profile -- <e2e|load|persist|broadcast>`.
+  `npm run bench:broadcast`, `npm run bench:e2e`, `npm run bench:archive`,
+  `npm run bench:export`.
+- Profiling: `npm run profile -- <e2e|load|persist|broadcast|archive|export>`.
 
 `npm test` needs Chromium and local browser/network capability. If Chromium is
 missing, run `npx playwright install chromium`.
