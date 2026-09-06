@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — Account 恢复与 Session 安全控制；04 — Organizer Application 与平台审批
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Organizer Owner 可以向指定 Account 发出 7 天有效的 Organizer Invitation，邀请只有目标 Account 能接受。
 - [x] 未接受、已过期、已撤销或已使用的邀请不能建立成员关系，并给出不泄露其他组织信息的失败响应。

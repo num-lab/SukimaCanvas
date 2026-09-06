@@ -97,14 +97,19 @@ count, and at capacity it is large. Measured on this machine with
 
 Two consequences, both covered by open item 3 in §7:
 
-1. The rasterizer call in `renderArchivePng` is synchronous, so it holds
-   the event loop for the whole render — measured at 649 ms of event-loop
-   lag for a 652 ms render, with a 50 ms heartbeat missing more than half
-   its ticks. On the single active application instance that stalls live
-   Board Sessions, Socket.IO traffic, HTTP requests, and the lifecycle
-   pass for the duration of the render.
+1. The render call in `renderArchivePng` is synchronous, so it holds the
+   event loop for its whole duration — measured at 649 ms of event-loop lag
+   for a 652 ms render, with a 50 ms heartbeat missing more than half its
+   ticks. On the single active application instance that stalls live Board
+   Sessions, Socket.IO traffic, HTTP requests, and the lifecycle pass for
+   the duration. The cost is not the rasterization: on an 8192x8192 output,
+   `new Resvg(svg)` (SVG parse) takes 2,422 ms at 512 items and 17,192 ms at
+   4,000 items, while `.render()` takes 65 ms and 170 ms and `.asPng()`
+   about 0.5 s. Parse scales at roughly 4.2 ms per item.
 2. `runDueExports` settles due jobs one at a time, so several large
    exports queue behind each other and add up.
+
+Issue 24 carries the fix and the options measured so far.
 
 Neither is a durability problem — jobs stay durable, idempotent, and
 retryable — but a full-capacity export blocking a shared instance for
@@ -161,12 +166,12 @@ this gate on its own: run `npm run lint` before merging to `master`.
    documented capacity procedure (runbook §4) with 20 concurrent live
    sessions / 1,000 provisioned seats on the target infrastructure and
    record the measured headroom here before opening registrations.
-3. **Image Export blocks the shared instance.** A full-capacity export
-   holds the event loop for minutes (§3). Decide and record the mitigation
-   before opening registrations: an asynchronous rasterizer call, a worker
-   thread or separate process for the render, a smaller edge cap, or a
-   documented limit on archive size for export. The measurement, not the
-   fix, is what this evidence records.
+3. **Image Export blocks the shared instance** (issue 24). A full-capacity
+   export holds the event loop for minutes (§3). Decide and record the
+   mitigation before opening registrations: an asynchronous render call, a
+   worker thread or separate process, cheaper SVG parsing, or a documented
+   limit on archive size for export. The measurement, not the fix, is what
+   this evidence records.
 4. PostgreSQL and S3-compatible object storage adapter selection; the
    backup/PITR procedures map onto them per runbook §2.
 5. Legal review of Terms of Service and Privacy Policy (external,

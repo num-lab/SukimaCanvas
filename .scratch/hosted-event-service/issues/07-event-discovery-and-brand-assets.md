@@ -4,7 +4,7 @@
 
 **Blocked by:** 06 — Reservation 申请、审批与容量约束
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 首页只列出允许公开发现且处于可展示生命周期的 Event，不暴露未列出或取消的活动。
 - [x] 未列出 Event 不出现在列表和索引中，但持有 Event Public ID 的访问者可以打开活动页。

@@ -4,7 +4,7 @@
 
 **Blocked by:** 06 — Reservation 申请、审批与容量约束
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Owner/Admin 可以针对改期、延期、容量或取消提交 Reservation Change Request，并查看审批状态。
 - [x] 影响容量的变更只有 Operator 审批后才更新 Reservation 与 Capacity Allocation，更新过程重新执行全部重叠容量约束。

@@ -4,7 +4,7 @@
 
 **Blocked by:** 05 — Organizer 成员邀请与角色权限
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Owner/Admin 可以维护 Reservation 草稿的活动名称、计划时间、1–50 个请求席位、可见性和必要展示信息。
 - [x] 只有合法且完整的草稿可以进入 SUBMITTED；提交后未经 Change Request 不可直接改写影响审批的字段。

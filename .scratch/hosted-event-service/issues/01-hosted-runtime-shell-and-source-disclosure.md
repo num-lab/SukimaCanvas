@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 现有 WBO 模式继续启动并通过现有 HTTP、Socket.IO 和浏览器回归测试，Hosted 模式不会改变其公开行为。
 - [x] Hosted 模式通过现有服务器组合入口启动，HTTP 与 Socket.IO 共用同一个 Hosted Event Module 运行时，不形成第二套旁路服务器。

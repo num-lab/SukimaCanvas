@@ -4,7 +4,7 @@
 
 **Blocked by:** 10 — Participant Seat 与实时连接准入
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 服务端从权威 Session、Event Membership、Board Session 和活动角色解析操作者，不信任客户端提交的作者或权限字段。
 - [x] 每个持久创建 mutation 记录 Event、Board Session、Account、操作时间、序号和 mutation 内容，并给新 Board Item 写入不可变 `createdBy` 语义。

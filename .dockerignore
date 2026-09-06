@@ -5,6 +5,12 @@ wbo-backup.tgz
 geckodriver.log
 logs
 server-data/*
+hosted-data/*
+.scratch
+playwright
+playwright-report
+test-results
+.profiles
 AUTHORS
 LICENSE
 nightwatch.conf.js

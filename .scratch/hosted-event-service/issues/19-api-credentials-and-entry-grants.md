@@ -4,7 +4,7 @@
 
 **Blocked by:** 05 — Organizer 成员邀请与角色权限；09 — Access Code 入场与 Event Membership
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Organizer Owner 可以创建、轮换、查看元数据和撤销 API Credential；完整 secret 只在创建或轮换时显示一次，之后不能恢复。
 - [x] Credential 只可访问所属 Organizer 已授权的集成 Interface，越权 Event、Reservation、Participant 和其他 Organizer 请求被拒绝。

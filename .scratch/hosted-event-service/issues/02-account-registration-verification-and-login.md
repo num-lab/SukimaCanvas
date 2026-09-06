@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Hosted Runtime Shell 与源码披露
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 注册要求用户确认已满 18 周岁，并对规范化邮箱执行确定性的唯一性检查。
 - [x] 密码只以合适的密码散列保存；HTTP 响应、日志和邮件均不泄露密码、散列或验证凭据。

@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — Account 注册、邮箱验证与登录
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 忘记密码流程使用一次性、限时凭据；申请和兑换响应不泄露 Account 是否存在。
 - [x] 修改或重置密码后，旧 Session 按安全策略撤销，已打开页面在下一次受保护请求或实时重连时失去权限。

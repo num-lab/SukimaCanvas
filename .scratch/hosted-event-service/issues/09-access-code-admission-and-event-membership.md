@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — Account 恢复与 Session 安全控制；07 — Event 发现页与 Brand Asset；08 — Reservation 变更与耐久活动调度
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 每个 Event 使用高熵 Access Code，服务端仅保存安全摘要；正确验证创建或恢复当前 Account 的 Event Membership。
 - [x] 错误代码、未知 Event、锁定 Event 和不可入场状态使用不利于枚举的响应，并按 Account 与 IP 限速。

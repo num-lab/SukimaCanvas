@@ -84,8 +84,11 @@ See instructions on our Wiki about [how to setup a reverse proxy for WBO](https:
 ### Hosted Event Service shell
 
 The Hosted Event Service shell can be enabled with `WBO_HOSTED_MODE=true`. In
-this mode the root page presents the SukimaCanvas hosted-service shell while
-the existing WBO board routes remain available during the incremental rollout.
+this mode the root page presents the SukimaCanvas hosted-service shell and every
+pre-event WBO entry surface is closed: `/boards/*`, random board allocation, raw
+SVG, preview, export, and download all answer a plain 404, so there is no
+compatibility path around event admission. The only board page is
+`/b/{boardName}`, reachable after the Hosted Event Module admits the request.
 The `/source` page identifies the exact deployment source when
 `WBO_DEPLOYMENT_VERSION`, a `{version}` URL template in
 `WBO_CORRESPONDING_SOURCE_URL`, and `WBO_CORRESPONDING_SOURCE_BUILD` are all

@@ -4,7 +4,7 @@
 
 **Blocked by:** 08 — Reservation 变更与耐久活动调度；12 — 完整笔画审计、派生关系与崩溃恢复
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Board Session 进入 CLOSING 后立即拒绝新的持久写入，但允许已接纳队列完成并向客户端得到确定结果。
 - [x] 关闭流程等待账本和 SVG 投影达到同一最终权威序号，校验失败时不标记归档成功。

@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — Account 注册、邮箱验证与登录
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 已验证 Account 可以提交包含必要主体信息的 Organizer Application，并查看当前申请状态。
 - [x] 重复提交、非法状态转换和超限输入被确定性处理，不会创建互相冲突的有效申请。

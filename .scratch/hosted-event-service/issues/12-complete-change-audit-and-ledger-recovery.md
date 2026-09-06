@@ -4,7 +4,7 @@
 
 **Blocked by:** 11 — Board Item 创建归属与耐久 Mutation Ledger
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 移动、编辑和追加保持 Board Item 的原始创建者，同时记录实际操作者、操作类型、时间和目标项目。
 - [x] 复制创建归属于复制者的新 Board Item，并保存可审计的来源关系；客户端不能伪造复制者或来源 Event。

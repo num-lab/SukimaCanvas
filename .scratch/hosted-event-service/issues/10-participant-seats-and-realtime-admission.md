@@ -4,7 +4,7 @@
 
 **Blocked by:** 09 — Access Code 入场与 Event Membership
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] SCHEDULED 的 Preparation Window 内只有 Organizer Owner/Admin 可编辑；普通 Participant 到计划开始且 Board Session OPEN 后才能获得写权限。
 - [x] Participant Seat 按 Event 内的独立 Account 计数，不按标签页或 socket 数量计数，且总占用不超过获批容量。
