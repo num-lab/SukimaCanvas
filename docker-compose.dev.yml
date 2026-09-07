@@ -1,0 +1,9 @@
+services:
+  app:
+    volumes:
+      - ./client-data:/opt/app/client-data:ro
+    command:
+      - node
+      - --watch-path=/opt/app/client-data
+      - --watch-preserve-output
+      - server/server.mjs

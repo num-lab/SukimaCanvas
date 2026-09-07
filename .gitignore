@@ -1,5 +1,6 @@
 .env
 .env.hosted
+.env.hosted.production
 node_modules
 
 lib-cov
