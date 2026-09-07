@@ -1,0 +1,43 @@
+{{#> hosted-layout
+  pageTitle=hostedTranslations.hosted_forgot_title
+  canonical=true
+}}
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-forgot-title">
+        {{#if hostedForgotSuccess}}
+        <h1 id="hosted-forgot-title">{{hostedTranslations.hosted_forgot_title}}</h1>
+        <p class="hosted-account-note">{{hostedForgotSuccess}}</p>
+        {{else}}
+        <h1 id="hosted-forgot-title">{{hostedTranslations.hosted_forgot_title}}</h1>
+        <p class="hosted-account-intro">{{hostedTranslations.hosted_forgot_intro}}</p>
+        {{#if hostedForgotError}}
+        <p class="hosted-form-error" role="alert">{{hostedForgotError}}</p>
+        {{/if}}
+        <form method="post" action="forgot" novalidate>
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-forgot-email">{{hostedTranslations.hosted_forgot_email_label}}</label>
+            <input
+              type="email"
+              id="hosted-forgot-email"
+              name="email"
+              required
+              maxlength="254"
+              autocomplete="email"
+            />
+          </div>
+          {{#if hostedCaptchaRequired}}
+          <div class="hosted-form-field">
+            <div class="cf-turnstile" data-sitekey="{{hostedCaptchaSiteKey}}"></div>
+            <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+          </div>
+          {{/if}}
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_forgot_submit}}</button>
+        </form>
+        {{/if}}
+        <p class="hosted-account-alt">
+          <a href="login">{{hostedTranslations.hosted_forgot_back_to_login}}</a>
+        </p>
+      </section>
+    </main>
+{{/hosted-layout}}

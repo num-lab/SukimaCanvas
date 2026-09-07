@@ -9,8 +9,8 @@ import {
   annotateBoardRequest,
   boardDocumentLocation,
   boardOperationTraceAttributes,
-  boardPermissionsForRequest,
   boardPageETag,
+  boardPermissionsForRequest,
   ensureBoardUserSecretCookie,
   matchesIfNoneMatch,
   parseBoardPageETagCandidates,
@@ -277,6 +277,9 @@ async function renderBoardDocument(ctx, pageRequest, document) {
     etag: boardPageETag(document.metadata.seq || 0),
     boardState,
     varyCookie: boardHtmlVariesByCookie(boardState),
+    // Hosted Event boards carry the event page path in the board identity so
+    // the client can route admission refusals back to the event page.
+    hostedEventPath: ctx.hostedEventPath,
   };
 
   if (document.source === "svg" || document.source === "svg_backup") {

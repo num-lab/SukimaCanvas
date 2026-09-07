@@ -42,6 +42,8 @@ export type MessageMetadata = {
   socket?: string;
   userId?: string;
   clientMutationId?: string;
+  /** Server-stamped opaque creator identity on item-creating mutations. */
+  createdBy?: string;
 };
 
 export type RequiredPointMessageFields = {
@@ -331,6 +333,8 @@ export type AppBoardState = {
   canReport?: boolean;
   canWrite: boolean;
   accessRefreshAfterMs?: number;
+  /** The Board Session was sealed behind its archive; the board is complete. */
+  eventClosed?: boolean;
 };
 
 export type MutationRejectedPayload = {
@@ -338,7 +342,10 @@ export type MutationRejectedPayload = {
   reason: string;
 };
 
-export type ModerationDisconnectSource = "moderator" | "peer_report";
+export type ModerationDisconnectSource =
+  | "moderator"
+  | "peer_report"
+  | "event_ban";
 
 export type ModerationDisconnectPayload = {
   banDurationMs: number;
@@ -346,10 +353,35 @@ export type ModerationDisconnectPayload = {
   source: ModerationDisconnectSource;
 };
 
+/** A moderator warning delivered to a connected target, which stays connected. */
+export type ModerationNoticePayload = {
+  reason: string;
+};
+
+/** A hosted moderation disposition sent by a moderator on the board. */
+export type ModerationActionPayload = {
+  action: "warn" | "kick" | "ban" | "unban";
+  reason: string;
+  /** Online target socket, for warn/kick/ban. */
+  socketId?: string;
+  /** Banned participant identifier, for unban. */
+  participantId?: string;
+};
+
+export type ModerationActionResultAck =
+  | { ok: true }
+  | { ok: false; reason: string };
+
+export type ModerationStateAck = {
+  banned: { participantId: string; name: string }[];
+};
+
 export type ConnectedUser = {
   socketId: string;
   userId: string;
   name: string;
+  /** Opaque event-scoped identity; hosted boards only. */
+  participantId?: string;
   color: string;
   size: number;
   lastTool: string;
@@ -400,6 +432,7 @@ export type ClientSocketIncomingEventMap = {
   [SocketEvents.DISCONNECT]: string;
   [SocketEvents.ERROR]: unknown;
   [SocketEvents.MODERATION_DISCONNECT]: ModerationDisconnectPayload;
+  [SocketEvents.MODERATION_NOTICE]: ModerationNoticePayload;
   [SocketEvents.MUTATION_REJECTED]: MutationRejectedPayload;
   [SocketEvents.RATE_LIMITED]: {
     event: string;
@@ -438,6 +471,11 @@ export type TurnstileAck = TurnstileSuccessAck | TurnstileFailureAck;
 
 export type ClientSocketOutgoingEventArgs = {
   [SocketEvents.BROADCAST]: [message: LiveBoardMessage];
+  [SocketEvents.MODERATION_ACTION]: [
+    payload: ModerationActionPayload,
+    ack?: (result: ModerationActionResultAck) => void,
+  ];
+  [SocketEvents.MODERATION_STATE]: [ack?: (result: ModerationStateAck) => void];
   [SocketEvents.REPORT_USER]: [payload: ReportUserPayload];
   [SocketEvents.SET_TEMPORARY_MODERATOR]: [
     payload: SetTemporaryModeratorPayload,
@@ -843,6 +881,12 @@ export type AppToolsState = {
   ids: AppIdModule;
   preferences: AppPreferenceModule;
   shell: AppShellModule;
+  /**
+   * Hosted Event boards only: the event page path admission refusals route
+   * back to. Undefined on legacy boards, where it also marks that the
+   * hosted governance UX (reason prompts, moderation dialog) applies.
+   */
+  hostedEventPath?: string;
   initialAuthoritativeSeq: number;
   attachDom: (
     board: HTMLElement,

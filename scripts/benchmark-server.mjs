@@ -33,6 +33,15 @@ const persistPoints = Math.max(8, config.MAX_CHILDREN - 4);
 const persistPencilUpdates = 128;
 const persistShapeUpdates = 128;
 const broadcastCount = 20_000;
+const archiveLedgerEntries = 8_192;
+const archiveClosingWrites = 128;
+// The export raster dominates its scenario and scales with item count, so the
+// default keeps `npm run bench` quick. Raise it (with WBO_BENCH_TIMEOUT_MS) to
+// measure the export cost of a full-capacity board.
+const exportItems = Number.parseInt(
+  process.env.WBO_BENCH_EXPORT_ITEMS ?? "512",
+  10,
+);
 const color = "#1f2937";
 const timeoutMs = Number.parseInt(
   process.env.WBO_BENCH_TIMEOUT_MS ?? "180000",
@@ -44,14 +53,23 @@ const profileHeapOut = process.env.WBO_PROFILE_HEAP_OUT;
 /** @typedef {{timeMs: number, details?: string, retain?: unknown}} BenchmarkSample */
 /** @typedef {{timeMs: number, transientBytes: number, retainedBytes: number, details?: string, retainedValue?: unknown}} MeasuredBenchmarkSample */
 
-if (!["all", "e2e", "load", "persist", "broadcast"].includes(scenario)) {
+if (
+  !["all", "e2e", "load", "persist", "broadcast", "archive", "export"].includes(
+    scenario,
+  )
+) {
   throw new Error(
-    `expected scenario all|e2e|load|persist|broadcast, got ${JSON.stringify(scenario)}`,
+    `expected scenario all|e2e|load|persist|broadcast|archive|export, got ${JSON.stringify(scenario)}`,
   );
 }
 if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
   throw new Error(
     `invalid WBO_BENCH_TIMEOUT_MS: ${JSON.stringify(process.env.WBO_BENCH_TIMEOUT_MS)}`,
+  );
+}
+if (!Number.isFinite(exportItems) || exportItems < 1) {
+  throw new Error(
+    `invalid WBO_BENCH_EXPORT_ITEMS: ${JSON.stringify(process.env.WBO_BENCH_EXPORT_ITEMS)}`,
   );
 }
 if (Boolean(profileCpuOut) !== Boolean(profileHeapOut)) {
@@ -543,6 +561,58 @@ try {
         },
       );
     });
+  }
+
+  if (shouldRun("archive")) {
+    const { prepareArchiveCloseBenchmark } = await import(
+      "./benchmark-hosted-outcomes.mjs"
+    );
+    const archiveFixture = buildBoard(boardItems, persistPoints);
+    const prepared = await prepareArchiveCloseBenchmark({
+      config,
+      historyDir,
+      board: archiveFixture.board,
+      pencilIds: archiveFixture.pencilIds,
+      ledgerEntryCount: archiveLedgerEntries,
+      closingWrites: archiveClosingWrites,
+    });
+    forceGc();
+    try {
+      await maybeWriteProfiles(async () => {
+        return bench(
+          "archive",
+          "close board session into private archive",
+          undefined,
+          (index) => prepared.runSample(index),
+        );
+      });
+    } finally {
+      await prepared.cleanup();
+    }
+  }
+
+  if (shouldRun("export")) {
+    const { prepareImageExportBenchmark } = await import(
+      "./benchmark-hosted-outcomes.mjs"
+    );
+    const prepared = await prepareImageExportBenchmark({
+      config,
+      historyDir,
+      board: buildBoard(exportItems, pencilPoints).board,
+    });
+    forceGc();
+    try {
+      await maybeWriteProfiles(async () => {
+        return bench(
+          "export",
+          "render sanitized png image export",
+          undefined,
+          (index) => prepared.runSample(index),
+        );
+      });
+    } finally {
+      await prepared.cleanup();
+    }
   }
 } finally {
   clearTimeout(timeout);

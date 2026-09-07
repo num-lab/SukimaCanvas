@@ -136,6 +136,7 @@ export async function startTestServer(
     ...process.env,
     PORT: "0",
     WBO_HISTORY_DIR: dataPath,
+    WBO_HOSTED_DATA_DIR: path.join(dataPath, "hosted-data"),
     WBO_SAVE_INTERVAL: "100",
     WBO_MAX_SAVE_DELAY: "100",
     WBO_MAX_EMIT_COUNT: "*:100000/60s",
@@ -152,6 +153,11 @@ export async function startTestServer(
     tokenQuery = `token=${options.token ?? TOKENS.globalEditor}`;
   } else {
     delete env.AUTH_SECRET_KEY;
+  }
+  // Hosted mode fail-closes without a deployment secret: participant
+  // identifier derivation requires one, exactly like production.
+  if (env.WBO_HOSTED_MODE === "true" && !env.AUTH_SECRET_KEY) {
+    env.AUTH_SECRET_KEY = AUTH_SECRET;
   }
 
   const serverPath = path.resolve("server", "server.mjs");

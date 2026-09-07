@@ -333,7 +333,13 @@ function processMessageBatch(board, children, parentMessage) {
               return { ok: false, reason: "copied object does not exist" };
             }
             const existingTarget = readItem(message.newid);
-            const validated = board.makeCopyCandidate(message.newid, current);
+            const validated = board.makeCopyCandidate(
+              message.newid,
+              current,
+              typeof message.createdBy === "string"
+                ? message.createdBy
+                : undefined,
+            );
             if (!validated.ok) return validated;
             validated.value.paintOrder =
               existingTarget?.paintOrder ?? validated.value.paintOrder;

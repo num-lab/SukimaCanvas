@@ -1,0 +1,75 @@
+{{#> hosted-layout
+  pageTitle=hostedTranslations.hosted_operator_application_title
+  canonical=true
+  workspaceNavigation=true
+}}
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-operator-app-title">
+        <h1 id="hosted-operator-app-title">{{hostedTranslations.hosted_operator_application_title}}</h1>
+        <p class="hosted-account-alt">
+          <a href="operator">{{hostedTranslations.hosted_operator_back_to_queue}}</a>
+        </p>
+
+        {{#if hostedOperatorNotice}}
+        <p class="hosted-form-error" role="alert">{{hostedOperatorNotice}}</p>
+        {{/if}}
+
+        <dl class="hosted-operator-detail">
+          <dt>{{hostedTranslations.hosted_organizer_name_label}}</dt>
+          <dd>{{hostedOperatorOrganizerName}}</dd>
+          <dt>{{hostedTranslations.hosted_operator_field_applicant}}</dt>
+          <dd>{{hostedOperatorApplicantEmail}}</dd>
+          <dt>{{hostedTranslations.hosted_organizer_contact_name_label}}</dt>
+          <dd>{{hostedOperatorContactName}}</dd>
+          <dt>{{hostedTranslations.hosted_organizer_contact_email_label}}</dt>
+          <dd>{{hostedOperatorContactEmail}}</dd>
+          {{#if hostedOperatorDescription}}
+          <dt>{{hostedTranslations.hosted_organizer_description_label}}</dt>
+          <dd>{{hostedOperatorDescription}}</dd>
+          {{/if}}
+          <dt>{{hostedTranslations.hosted_operator_status_label}}</dt>
+          <dd>
+            {{#if hostedOperatorStatusPending}}{{hostedTranslations.hosted_organizer_status_pending}}{{/if}}
+            {{#if hostedOperatorStatusApproved}}{{hostedTranslations.hosted_organizer_status_approved}}{{/if}}
+            {{#if hostedOperatorStatusRejected}}{{hostedTranslations.hosted_organizer_status_rejected}}{{/if}}
+          </dd>
+          {{#if hostedOperatorDecidedBy}}
+          <dt>{{hostedTranslations.hosted_operator_decided_by}}</dt>
+          <dd>{{hostedOperatorDecidedBy}} ({{hostedOperatorDecidedAt}})</dd>
+          {{/if}}
+          {{#if hostedOperatorNote}}
+          <dt>{{hostedTranslations.hosted_operator_note_label}}</dt>
+          <dd>{{hostedOperatorNote}}</dd>
+          {{/if}}
+        </dl>
+
+        {{#if hostedOperatorStatusPending}}
+        <div class="hosted-operator-decision">
+          <form method="post" action="operator/applications/{{hostedOperatorApplicationId}}/approve">
+            <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+            <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_operator_approve_submit}}</button>
+          </form>
+          <form method="post" action="operator/applications/{{hostedOperatorApplicationId}}/reject">
+            <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+            <div class="hosted-form-field">
+              <label for="hosted-operator-note">{{hostedTranslations.hosted_operator_note_label}}</label>
+              <textarea id="hosted-operator-note" name="note" rows="3" maxlength="2000"></textarea>
+            </div>
+            <button type="submit" class="hosted-submit hosted-submit-danger">{{hostedTranslations.hosted_operator_reject_submit}}</button>
+          </form>
+        </div>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_operator_audit_title}}</h2>
+        <ul class="hosted-operator-audit">
+          {{#hostedOperatorAudit}}
+          <li class="hosted-operator-audit-item">
+            <span class="hosted-operator-audit-action">{{action}}</span>
+            <span class="hosted-operator-audit-actor">{{actorEmail}}</span>
+            <span class="hosted-operator-audit-at">{{at}}</span>
+          </li>
+          {{/hostedOperatorAudit}}
+        </ul>
+      </section>
+    </main>
+{{/hosted-layout}}

@@ -1,0 +1,16 @@
+{{#> hosted-layout
+  pageTitle=hostedTranslations.hosted_verify_title
+  canonical=true
+}}
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-verify-title">
+        <h1 id="hosted-verify-title">{{hostedTranslations.hosted_verify_title}}</h1>
+        {{#if hostedVerifyInvalid}}
+        <p class="hosted-form-error" role="alert">{{hostedVerifyInvalid}}</p>
+        {{/if}}
+        <p class="hosted-account-alt">
+          <a href="login">{{hostedTranslations.hosted_nav_login}}</a>
+        </p>
+      </section>
+    </main>
+{{/hosted-layout}}

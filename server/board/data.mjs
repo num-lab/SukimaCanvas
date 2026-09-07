@@ -83,6 +83,7 @@ import {
   trimOverflowItems as trimBoardOverflowItems,
 } from "./message_processing.mjs";
 import { createMutationLog } from "./mutation_log.mjs";
+import { boardMutationLedgerFor } from "./ledger_registry.mjs";
 import {
   createDefaultSvgExtent,
   extendSvgExtentForItem,
@@ -206,6 +207,9 @@ class BoardData {
     this.saveTimeoutId = undefined;
     this.users = new Set();
     this.mutationLog = createMutationLog(0);
+    // Durable ledger behind the accepted-mutation history when a factory is
+    // registered (hosted mode). Legacy boards keep the in-memory-only log.
+    this.mutationLedger = boardMutationLedgerFor(name);
     /** @type {PendingMutationEffect[]} */
     this.pendingRejectedMutationEffects = [];
     /** @type {PendingMutationEffect[]} */
@@ -296,13 +300,18 @@ class BoardData {
   /**
    * @param {NormalizedMessageData} mutation
    * @param {number} [acceptedAtMs]
+   * @param {number} [explicitSeq] - Ledger-assigned sequence for durably
+   * accepted mutations; must be exactly latestSeq + 1.
    * @returns {MutationLogEntry}
    */
-  recordPersistentMutation(mutation, acceptedAtMs = Date.now()) {
-    return this.mutationLog.append({
-      acceptedAtMs,
-      mutation,
-    });
+  recordPersistentMutation(mutation, acceptedAtMs = Date.now(), explicitSeq) {
+    return this.mutationLog.append(
+      {
+        acceptedAtMs,
+        mutation,
+      },
+      explicitSeq,
+    );
   }
 
   /**
@@ -674,13 +683,16 @@ class BoardData {
   /**
    * Copies a stored item to a new id without re-running full stored-item
    * normalization. Board state is already normalized, so only the new id and
-   * mutable containers need isolation.
+   * mutable containers need isolation. The copier's Participant Identifier,
+   * when the acceptance layer stamped the COPY mutation, becomes the copy's
+   * immutable creator here — the single site where a copy is materialized.
    *
    * @param {string} newId
    * @param {BoardElem} item
+   * @param {string} [createdBy]
    * @returns {ValidatedStoredCandidate | ValidationFailure}
    */
-  makeCopyCandidate(newId, item) {
+  makeCopyCandidate(newId, item, createdBy) {
     const normalizedId = MessageCommon.normalizeId(newId);
     if (normalizedId === null) return { ok: false, reason: "invalid id" };
     if (typeof item !== "object") {
@@ -691,6 +703,8 @@ class BoardData {
       item,
       normalizedId,
       existing?.paintOrder ?? this.nextPaintOrder,
+      Date.now(),
+      createdBy,
     );
     const baselineSourceId = this.baselineSourceIdForItem(item);
     if (copied.payload?.kind === "children" && baselineSourceId) {
@@ -839,7 +853,11 @@ class BoardData {
     const obj = getCanonicalItem(this, id);
     const newid = data.newid;
     if (obj) {
-      const validated = this.makeCopyCandidate(newid, obj);
+      const validated = this.makeCopyCandidate(
+        newid,
+        obj,
+        typeof data.createdBy === "string" ? data.createdBy : undefined,
+      );
       if (!validated.ok) return validated;
       this.upsertItem(validated.canonical);
     } else {

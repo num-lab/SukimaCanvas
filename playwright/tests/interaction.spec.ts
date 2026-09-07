@@ -217,9 +217,9 @@ test.describe("single-page interactions", () => {
   });
 
   test("zoom clicks in and out", async ({ boardPage }) => {
-    await boardPage.gotoBoard("zoom-test", { lang: "fr" });
+    await boardPage.gotoBoard("zoom-test", { lang: "ja" });
     await expect(boardPage.tool("zoom")).toBeVisible();
-    await expect(boardPage.tool("zoom")).toContainText("Zoom");
+    await expect(boardPage.tool("zoom")).toContainText("拡大・縮小");
     await boardPage.selectTool("zoom");
 
     const result = await boardPage.zoomClickInAndOut({ x: 200, y: 200 });

@@ -19,6 +19,7 @@ const { logger } = observability;
  *   handler: HttpRouteHandler,
  *   access: "none" | "user",
  *   where: ((params: Record<string, string>, url: URL) => boolean) | undefined,
+ *   hostedOpenAccess?: boolean,
  *   match: (pathname: string) => Record<string, string> | null,
  * }} HttpRoute
  */
@@ -61,7 +62,7 @@ function compilePathPattern(pattern) {
  * @param {string} pattern
  * @param {HttpRouteHandler} handler
  * @param {string} routeName
- * @param {{access?: "none" | "user", where?: (params: Record<string, string>, url: URL) => boolean}=} options
+ * @param {{access?: "none" | "user", where?: (params: Record<string, string>, url: URL) => boolean, hostedOpenAccess?: boolean}=} options
  * @returns {HttpRoute}
  */
 function route(pattern, handler, routeName, options = {}) {
@@ -71,6 +72,10 @@ function route(pattern, handler, routeName, options = {}) {
     routeName,
     access: options.access || "none",
     where: options.where,
+    // Hosted mode rejections must be deterministic 404s regardless of auth
+    // state, so access-controlled legacy surfaces can opt out of the auth
+    // pre-check when the Hosted Event Module is enabled.
+    hostedOpenAccess: options.hostedOpenAccess === true,
     match: compilePathPattern(pattern),
   };
 }
@@ -125,7 +130,12 @@ function routeHttpRequests(routes) {
         const publicUrl = routePublicUrl(runtime.config, url);
         const { route, params } = matchHttpRoute(routes, url);
         observed.setRoute(route.routeName);
-        if (route.access === "user") {
+        if (
+          route.access === "user" &&
+          !(
+            route.hostedOpenAccess === true && runtime.hostedEventModule.enabled
+          )
+        ) {
           jwtauth.checkUserPermission(url, runtime.config);
         }
         await route.handler(

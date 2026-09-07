@@ -67,7 +67,17 @@ export class ReplayModule {
       headers: { Accept: "image/svg+xml" },
     });
     if (!response.ok) {
-      throw new Error(`Baseline fetch failed with HTTP ${response.status}`);
+      // Hosted boards answer refusal re-baselines with the admission reason
+      // so the reconnect loop can end in a route back to the event page.
+      const admissionReason = response.headers.get("X-WBO-Admission-Reason");
+      /** @type {Error & {admissionReason?: string}} */
+      const error = new Error(
+        `Baseline fetch failed with HTTP ${response.status}`,
+      );
+      if (admissionReason) {
+        error.admissionReason = admissionReason;
+      }
+      throw error;
     }
     const baseline = parseServedBaselineSvgText(
       await response.text(),

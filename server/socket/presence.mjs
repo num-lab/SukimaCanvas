@@ -15,7 +15,7 @@ import {
 } from "./request.mjs";
 
 /** @import { AppSocket, ConnectedUserPayload, NormalizedMessageData, ServerConfig } from "../../types/server-runtime.d.ts" */
-/** @typedef {{socketId: string, userId: string, userSecret: string, name: string, ip: string, userAgent: string, language: string, color: string, size: number, lastTool: string, lastSeen: number, joinedAt: number, position: {x: number, y: number}, canEdit: boolean, canClear: boolean, canBan: boolean, canGrantTemporaryModerator: boolean}} BoardUser */
+/** @typedef {{socketId: string, userId: string, userSecret: string, name: string, ip: string, userAgent: string, language: string, participantId?: string, color: string, size: number, lastTool: string, lastSeen: number, joinedAt: number, position: {x: number, y: number}, canEdit: boolean, canClear: boolean, canBan: boolean, canGrantTemporaryModerator: boolean}} BoardUser */
 /** @typedef {(socket: AppSocket, boardName: string, config: ServerConfig) => string} ResolveClientIp */
 /** @typedef {{canEdit?: boolean, canClear?: boolean, canBan?: boolean, canGrantTemporaryModerator?: boolean}} UserCapabilities */
 
@@ -74,6 +74,11 @@ function buildBoardUserRecord(
     ip,
     userAgent: getSocketHeaderValue(socket, "user-agent"),
     language: getSocketHeaderValue(socket, "accept-language"),
+    // The opaque, event-scoped identity attributed to this account's items
+    // on hosted boards. Undefined on legacy boards. The same identifier is
+    // already carried by item attribution on hosted boards, so exposing it
+    // beside the display name adds no new visibility.
+    participantId: socket.hostedEventAdmission?.participantId,
     color: color || "#001f3f",
     size,
     lastTool: getToolId(getSocketQueryValue(socket, "tool")) || "hand",
@@ -138,6 +143,8 @@ function serializeBoardUser(user) {
     canClear: user.canClear,
     canBan: user.canBan,
     canGrantTemporaryModerator: user.canGrantTemporaryModerator,
+    // Present only on hosted boards; dropped by JSON for legacy users.
+    ...(user.participantId ? { participantId: user.participantId } : {}),
   };
 }
 

@@ -5,7 +5,10 @@ export const SocketEvents = Object.freeze({
   CONNECT_ERROR: "connect_error",
   DISCONNECT: "disconnect",
   ERROR: "error",
+  MODERATION_ACTION: "moderation_action",
   MODERATION_DISCONNECT: "moderation_disconnect",
+  MODERATION_NOTICE: "moderation_notice",
+  MODERATION_STATE: "moderation_state",
   MUTATION_REJECTED: "mutation_rejected",
   RATE_LIMITED: "rate-limited",
   REPORT_USER: "report_user",
@@ -19,4 +22,13 @@ export const SocketEvents = Object.freeze({
 export const ModerationDisconnectSources = Object.freeze({
   MODERATOR: "moderator",
   PEER_REPORT: "peer_report",
+  EVENT_BAN: "event_ban",
+});
+
+/** Hosted Event moderation dispositions a moderator may apply. */
+export const ModerationActions = Object.freeze({
+  WARN: "warn",
+  KICK: "kick",
+  BAN: "ban",
+  UNBAN: "unban",
 });

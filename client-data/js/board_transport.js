@@ -24,6 +24,8 @@ function normalizeSocketIOExtraHeaders(value) {
  * @param {string | null} token
  * @param {string} boardName
  * @param {SocketQueryParams | null} [extraQueryParams]
+ * @param {string} [socketIoPath] Server-computed endpoint; derived from the
+ *   page location when absent.
  * @returns {SocketParams}
  */
 function buildSocketParams(
@@ -32,10 +34,11 @@ function buildSocketParams(
   token,
   boardName,
   extraQueryParams,
+  socketIoPath,
 ) {
   /** @type {SocketParams} */
   const socketParams = {
-    path: `${pathname.split("/boards/")[0]}/socket.io`,
+    path: socketIoPath || `${pathname.split("/boards/")[0]}/socket.io`,
     reconnection: false,
     reconnectionDelay: 100,
     autoConnect: false,

@@ -144,6 +144,8 @@ const runtimeState = {
   loadedBoards: 0,
   connectedUsers: 0,
   activeSocketConnections: 0,
+  hostedActiveSessions: 0,
+  hostedCommittedSeats: 0,
 };
 
 const httpServerRequestDuration = meter.createHistogram(
@@ -241,6 +243,45 @@ const turnstileVerifications = meter.createCounter(
     unit: "{verification}",
   },
 );
+const hostedBoardArchiveCloses = meter.createCounter(
+  "wbo.hosted.board_archive",
+  {
+    description:
+      'Count of hosted Board Session archive close attempts, labeled by "wbo.hosted.board_archive.outcome"; error.type carries the deterministic failure code for failed attempts.',
+    unit: "{close}",
+  },
+);
+const hostedBoardExports = meter.createCounter("wbo.hosted.board_export", {
+  description:
+    'Count of Board Image Export job attempts, labeled by "wbo.hosted.board_export.outcome"; error.type carries the deterministic failure code for failed attempts.',
+  unit: "{export}",
+});
+const hostedWebhookDeliveries = meter.createCounter(
+  "wbo.hosted.webhook_delivery",
+  {
+    description:
+      'Count of signed webhook delivery attempts, labeled by "wbo.hosted.webhook_delivery.outcome"; error.type carries the deterministic failure kind for failed attempts.',
+    unit: "{delivery}",
+  },
+);
+const hostedOutcomePurges = meter.createCounter("wbo.hosted.outcome_purge", {
+  description:
+    'Count of hosted event outcome purge attempts, labeled by "wbo.hosted.outcome_purge.outcome"; error.type carries the deterministic failure code for failed attempts.',
+  unit: "{purge}",
+});
+const hostedHistoricalImports = meter.createCounter(
+  "wbo.hosted.historical_import",
+  {
+    description:
+      'Count of controlled Historical Archive import attempts, labeled by "wbo.hosted.historical_import.outcome"; error.type carries the deterministic failure code for rejected attempts.',
+    unit: "{import}",
+  },
+);
+const hostedNotices = meter.createCounter("wbo.hosted.notice", {
+  description:
+    'Count of hosted notice delivery attempts, labeled by "wbo.hosted.notice.outcome" and "wbo.hosted.notice.kind"; a failed attempt is retried with backoff and stays observable.',
+  unit: "{notice}",
+});
 const loadedBoardsGauge = meter.createObservableGauge("wbo.board.loaded", {
   description: "Current number of board instances loaded in server memory.",
   unit: "{board}",
@@ -261,6 +302,22 @@ const connectedUsersGauge = meter.createObservableGauge(
     unit: "{user}",
   },
 );
+const hostedActiveSessionsGauge = meter.createObservableGauge(
+  "wbo.hosted.capacity.board_sessions_active",
+  {
+    description:
+      "Current number of live (open or draining) hosted Board Sessions against the confirmed 20-session platform limit.",
+    unit: "{session}",
+  },
+);
+const hostedCommittedSeatsGauge = meter.createObservableGauge(
+  "wbo.hosted.capacity.seats_committed",
+  {
+    description:
+      "Current number of Participant Seats committed by live hosted Board Sessions against the confirmed 1,000-seat platform limit.",
+    unit: "{seat}",
+  },
+);
 loadedBoardsGauge.addCallback(function observeLoadedBoards(observer) {
   observer.observe(runtimeState.loadedBoards);
 });
@@ -271,6 +328,12 @@ activeSocketConnectionsGauge.addCallback(
 );
 connectedUsersGauge.addCallback(function observeConnectedUsers(observer) {
   observer.observe(runtimeState.connectedUsers);
+});
+hostedActiveSessionsGauge.addCallback(function observeActiveSessions(observer) {
+  observer.observe(runtimeState.hostedActiveSessions);
+});
+hostedCommittedSeatsGauge.addCallback(function observeCommittedSeats(observer) {
+  observer.observe(runtimeState.hostedCommittedSeats);
 });
 
 /**
@@ -837,6 +900,119 @@ function recordTurnstileVerification(errorType) {
 }
 
 /**
+ * Records one Board Session archive close attempt outcome: the session was
+ * either sealed behind its Private Board Archive ("archived") or the attempt
+ * failed with a deterministic failure code, keeping the session recoverable.
+ *
+ * @param {"archived" | "failed"} outcome
+ * @param {string} [failureCode] deterministic failure code for failed attempts
+ * @returns {void}
+ */
+function recordBoardArchiveClose(outcome, failureCode) {
+  /** @type {{[key: string]: string}} */
+  const attributes = { "wbo.hosted.board_archive.outcome": outcome };
+  if (outcome === "failed" && typeof failureCode === "string" && failureCode) {
+    attributes[ATTR_ERROR_TYPE] = failureCode;
+  }
+  hostedBoardArchiveCloses.add(1, attributes);
+}
+
+/**
+ * Records one Board Image Export job attempt outcome: the job either produced
+ * its sanitized PNG ("succeeded") or failed with a deterministic failure code
+ * while staying recoverable or terminally failed on its record.
+ *
+ * @param {"succeeded" | "failed"} outcome
+ * @param {string} [failureCode] deterministic failure code for failed attempts
+ * @returns {void}
+ */
+function recordBoardExport(outcome, failureCode) {
+  /** @type {{[key: string]: string}} */
+  const attributes = { "wbo.hosted.board_export.outcome": outcome };
+  if (outcome === "failed" && typeof failureCode === "string" && failureCode) {
+    attributes[ATTR_ERROR_TYPE] = failureCode;
+  }
+  hostedBoardExports.add(1, attributes);
+}
+
+/**
+ * Records one signed webhook delivery attempt outcome: the event either
+ * reached the receiver ("delivered") or the attempt failed with a
+ * deterministic failure kind while staying queued for a backed-off retry.
+ *
+ * @param {"delivered" | "failed"} outcome
+ * @param {string} [failureKind] deterministic failure kind for failed attempts
+ * @returns {void}
+ */
+function recordWebhookDelivery(outcome, failureKind) {
+  /** @type {{[key: string]: string}} */
+  const attributes = { "wbo.hosted.webhook_delivery.outcome": outcome };
+  if (outcome === "failed" && typeof failureKind === "string" && failureKind) {
+    attributes[ATTR_ERROR_TYPE] = failureKind;
+  }
+  hostedWebhookDeliveries.add(1, attributes);
+}
+
+/**
+ * Records one hosted event outcome purge attempt outcome: the event's Private
+ * Board Archive, Item Attribution, Change Audit, and associated exports were
+ * either purged ("purged") or the attempt failed with a deterministic failure
+ * code while staying recoverable and retryable.
+ *
+ * @param {"purged" | "failed"} outcome
+ * @param {string} [failureCode] deterministic failure code for failed attempts
+ * @returns {void}
+ */
+function recordOutcomePurge(outcome, failureCode) {
+  /** @type {{[key: string]: string}} */
+  const attributes = { "wbo.hosted.outcome_purge.outcome": outcome };
+  if (outcome === "failed" && typeof failureCode === "string" && failureCode) {
+    attributes[ATTR_ERROR_TYPE] = failureCode;
+  }
+  hostedOutcomePurges.add(1, attributes);
+}
+
+/**
+ * Records one controlled Historical Archive import attempt: the source was
+ * either imported as a private, unknown-author archive ("imported") or the
+ * attempt failed with a deterministic failure code while producing no
+ * artifact and staying recorded in the operator audit trail.
+ *
+ * @param {"imported" | "rejected"} outcome
+ * @param {string} [failureCode] deterministic failure code for rejected attempts
+ * @returns {void}
+ */
+function recordHistoricalImport(outcome, failureCode) {
+  /** @type {{[key: string]: string}} */
+  const attributes = { "wbo.hosted.historical_import.outcome": outcome };
+  if (
+    outcome === "rejected" &&
+    typeof failureCode === "string" &&
+    failureCode
+  ) {
+    attributes[ATTR_ERROR_TYPE] = failureCode;
+  }
+  hostedHistoricalImports.add(1, attributes);
+}
+
+/**
+ * Records one hosted notice delivery attempt outcome: the notice was either
+ * handed to the mail vendor ("sent") or the attempt failed and stays queued
+ * for a backed-off retry. The kind attribute separates account mail from the
+ * event lifecycle notices.
+ *
+ * @param {"sent" | "failed"} outcome
+ * @param {string} kind
+ * @returns {void}
+ */
+function recordNoticeDelivery(outcome, kind) {
+  hostedNotices.add(1, {
+    "wbo.hosted.notice.outcome": outcome,
+    "wbo.hosted.notice.kind": String(kind || "unknown"),
+  });
+}
+
+/**
  * @param {string} operation
  * @param {string | undefined} boardName
  * @param {number} durationSeconds
@@ -862,6 +1038,19 @@ function recordBoardOperationDuration(
     attributes[ATTR_ERROR_TYPE] = normalizedErrorType;
   }
   boardOperationDuration.record(durationSeconds, attributes);
+}
+
+/**
+ * Publishes the hosted platform's current capacity usage — live Board
+ * Sessions and their committed Participant Seats — so capacity alerts read
+ * directly against the confirmed 20-session / 1,000-seat limits.
+ *
+ * @param {{activeSessions: number, committedSeats: number}} usage
+ * @returns {void}
+ */
+function setHostedCapacityUsage(usage) {
+  runtimeState.hostedActiveSessions = usage.activeSessions;
+  runtimeState.hostedCommittedSeats = usage.committedSeats;
 }
 
 /**
@@ -939,6 +1128,13 @@ const logger = {
 };
 
 const observabilityMetrics = {
+  recordBoardArchiveClose,
+  recordBoardExport,
+  recordWebhookDelivery,
+  recordOutcomePurge,
+  setHostedCapacityUsage,
+  recordHistoricalImport,
+  recordNoticeDelivery,
   recordBoardMessage,
   changeHttpActiveRequests,
   recordBoardOperationDuration,

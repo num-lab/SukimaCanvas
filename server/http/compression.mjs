@@ -178,14 +178,20 @@ export function applyCompressionForResponse(response, acceptEncoding, headers) {
  * @param {import("http").ServerResponse} response
  * @param {string | string[] | undefined} acceptEncoding
  * @param {{ [name: string]: string | number }} headers
+ * @param {number} [statusCode]
  * @returns {{ stream: import("stream").Writable, encoding: CompressionEncoding | undefined }}
  */
-export function startCompressedResponse(response, acceptEncoding, headers) {
+export function startCompressedResponse(
+  response,
+  acceptEncoding,
+  headers,
+  statusCode = 200,
+) {
   const result = applyCompressionForResponse(response, acceptEncoding, headers);
   for (const [name, value] of Object.entries(headers)) {
     response.setHeader(name, value);
   }
-  response.writeHead(200);
+  response.writeHead(statusCode);
   return result;
 }
 

@@ -1,0 +1,46 @@
+name: sukimacanvas
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - .env.hosted
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+    env_file:
+      - .env.hosted
+    depends_on:
+      postgres:
+        condition: service_healthy
+    init: true
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - board-cache:/opt/app/server-data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1/').then(r=>{if(!r.ok)throw Error(r.status)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    stop_grace_period: 45s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  board-cache:

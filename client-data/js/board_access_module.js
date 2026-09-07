@@ -42,6 +42,11 @@ export class AccessModule {
     const Tools = this.getTools();
     this.boardState = boardState;
     Tools.connection.scheduleAccessRefresh(boardState.accessRefreshAfterMs);
+    // The Board Session was sealed behind its archive: the event ended, the
+    // board is complete and read-only, and no reconnect can restore editing.
+    if (boardState.eventClosed) {
+      Tools.status.showBoardClosedNotice();
+    }
     // Hide editing affordances whenever the user cannot edit (a read-only board,
     // or a banned user on a writable one). The drawing tools themselves are
     // gated by shouldDisplayTool, which is capability-aware.

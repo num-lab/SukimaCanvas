@@ -15,7 +15,7 @@ function normalizeSeq(value) {
  *   latestSeq: () => number,
  *   persistedSeq: () => number,
  *   minReplayableSeq: () => number,
- *   append: (entry: Omit<MutationLogEntry, "seq">) => MutationLogEntry,
+ *   append: (entry: Omit<MutationLogEntry, "seq">, explicitSeq?: number) => MutationLogEntry,
  *   readFrom: (fromExclusiveSeq: number) => MutationLogEntry[],
  *   markPersisted: (persistedSeq: number) => void,
  *   trimPersistedOlderThan: (cutoffMs: number, pinnedBaselineSeq?: number | null) => void,
@@ -39,9 +39,18 @@ function createMutationLog(initialSeq = 0) {
       const firstEntry = entries[0];
       return firstEntry ? Math.max(0, firstEntry.seq - 1) : latestSeq;
     },
-    append(entry) {
+    append(entry, explicitSeq = undefined) {
+      const nextSeq =
+        explicitSeq === undefined ? latestSeq + 1 : normalizeSeq(explicitSeq);
+      if (nextSeq !== latestSeq + 1) {
+        throw new Error(
+          `Mutation log seq must stay contiguous: expected ${
+            latestSeq + 1
+          }, got ${nextSeq}`,
+        );
+      }
       const nextEntry = {
-        seq: latestSeq + 1,
+        seq: nextSeq,
         acceptedAtMs: entry.acceptedAtMs,
         mutation: entry.mutation,
       };

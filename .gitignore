@@ -1,4 +1,6 @@
 .env
+.env.hosted
+.env.hosted.production
 node_modules
 
 lib-cov
@@ -21,6 +23,10 @@ npm-debug.log
 wbo-backup*
 server-data/board-*.svg
 server-data/board-*.json
+
+# Hosted Event Service durable state: accounts, sessions, ledgers, archives,
+# exports, and the mail outbox. Never commit it — it holds real identities.
+hosted-data/
 
 # Jetbrains
 .idea/

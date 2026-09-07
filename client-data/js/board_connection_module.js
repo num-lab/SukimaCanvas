@@ -85,7 +85,10 @@ export function normalizeModerationDisconnectPayload(payload) {
     rawDuration === 0 &&
     !("moderationRule" in payloadRecord)
       ? ModerationDisconnectSources.PEER_REPORT
-      : ModerationDisconnectSources.MODERATOR;
+      : payloadRecord !== null &&
+          payloadRecord.source === ModerationDisconnectSources.EVENT_BAN
+        ? ModerationDisconnectSources.EVENT_BAN
+        : ModerationDisconnectSources.MODERATOR;
   return {
     banDurationMs:
       Number.isFinite(raw) && raw > 0 ? Math.max(0, Math.floor(raw)) : 0,
@@ -106,6 +109,13 @@ export function getModerationDisconnectNoticeDescriptor(notice) {
       messageKey: "peer_report_disconnect_body",
     };
   }
+  if (notice.source === ModerationDisconnectSources.EVENT_BAN) {
+    return {
+      kind: "ban",
+      titleKey: "event_ban_disconnect_title",
+      messageKey: "event_ban_disconnect_body",
+    };
+  }
   return notice.banDurationMs > 0
     ? {
         kind: "ban",
@@ -117,6 +127,47 @@ export function getModerationDisconnectNoticeDescriptor(notice) {
         titleKey: "moderation_warning_title",
         messageKey: "moderation_warning_body",
       };
+}
+
+/**
+ * Map of terminal hosted admission refusals onto event-page notices. When
+ * the board carries an event page path, these refusals end the reconnect
+ * loop and route back to the event page, which explains the state.
+ */
+const HOSTED_REFUSAL_NOTICES = {
+  event_banned: "banned",
+  event_full: "full",
+  event_locked: "not_open",
+  membership_required: "membership",
+  event_not_open: "not_open",
+};
+
+/**
+ * @param {string} reason
+ * @returns {string | null}
+ */
+export function hostedRefusalNotice(reason) {
+  return Object.prototype.hasOwnProperty.call(HOSTED_REFUSAL_NOTICES, reason)
+    ? HOSTED_REFUSAL_NOTICES[
+        /** @type {keyof typeof HOSTED_REFUSAL_NOTICES} */ (reason)
+      ]
+    : null;
+}
+
+/**
+ * Routes a terminal hosted admission refusal back to the event page.
+ *
+ * @param {AppToolsState} Tools
+ * @param {(level: "error" | "log" | "warn", event: string, fields?: {[key: string]: unknown}) => void} logBoardEvent
+ * @param {string | null | undefined} reason
+ * @returns {boolean} whether the redirect was issued
+ */
+function redirectHostedRefusal(Tools, logBoardEvent, reason) {
+  const refusalNotice = hostedRefusalNotice(reason ?? "");
+  if (!Tools.hostedEventPath || refusalNotice === null) return false;
+  logBoardEvent("warn", "socket.hosted_refusal_redirect", { reason });
+  window.location.assign(`${Tools.hostedEventPath}?notice=${refusalNotice}`);
+  return true;
 }
 
 /**
@@ -256,6 +307,15 @@ export class ConnectionModule {
             optimisticJournalSize: Tools.optimistic.journal.size(),
             pendingPreSnapshotMessages: Tools.replay.preSnapshotMessages.length,
           });
+          if (
+            redirectHostedRefusal(
+              Tools,
+              this.logBoardEvent,
+              /** @type {any} */ (error)?.admissionReason,
+            )
+          ) {
+            return;
+          }
           this.scheduleSocketReconnect(nextReconnectDelayMs);
           return;
         }
@@ -272,6 +332,10 @@ export class ConnectionModule {
           color: Tools.preferences.getColor(),
           size: String(Tools.preferences.getSize()),
         },
+        // The Hosted Event board page carries a server-computed socket.io
+        // path because its URL is not a /boards/ path; legacy pages derive it
+        // from the location.
+        Tools.identity.socketIoPath,
       );
 
       if (reusableSocket) {
@@ -358,6 +422,10 @@ export class ConnectionModule {
             BoardConnection.closeSocket(socket);
           }
         }
+        // Terminal hosted admission refusals (banned, full, closed, locked,
+        // membership lost) must not loop reconnects: route back to the event
+        // page, which explains the state.
+        if (redirectHostedRefusal(Tools, this.logBoardEvent, reason)) return;
         this.scheduleSocketReconnect();
       });
       socket.on(SocketEvents.USER_JOINED, function onUserJoined(user) {
@@ -369,6 +437,29 @@ export class ConnectionModule {
       socket.on(SocketEvents.USER_REPORTED, function onUserReported(payload) {
         Tools.status.showUserReportNotice(payload);
       });
+      socket.on(
+        SocketEvents.MODERATION_NOTICE,
+        function onModerationNotice(payload) {
+          const reason =
+            payload !== null &&
+            typeof payload === "object" &&
+            typeof (/** @type {{reason?: unknown}} */ (payload).reason) ===
+              "string"
+              ? /** @type {{reason: string}} */ (payload).reason
+              : "";
+          void Tools.ui.showActionDialog({
+            title: Tools.i18n.t("moderation_warning_title"),
+            message:
+              reason !== ""
+                ? Tools.i18n.format("moderation_hosted_notice_body", {
+                    reason,
+                  })
+                : Tools.i18n.t("moderation_warning_body"),
+            sections: [],
+            cancelLabel: Tools.i18n.t("moderation_acknowledge"),
+          });
+        },
+      );
       socket.on(
         SocketEvents.MODERATION_DISCONNECT,
         /**

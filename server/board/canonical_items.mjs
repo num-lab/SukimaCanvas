@@ -119,6 +119,19 @@ function publicBaseFromCanonicalItem(item) {
 }
 
 /**
+ * Reads a server-stamped creator from a mutation or a stored summary. The
+ * value is the event-scoped opaque Participant Identifier resolved by the
+ * Hosted Event Module; clients can never supply it because message
+ * normalization drops unknown fields before acceptance.
+ *
+ * @param {unknown} value
+ * @returns {string | undefined}
+ */
+function readCreatedBy(value) {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+/**
  * @param {any} item
  * @returns {{[key: string]: any}}
  */
@@ -126,7 +139,9 @@ function readInlineAttrs(item) {
   /** @type {{[key: string]: any}} */
   const attrs = {};
   for (const [key, value] of Object.entries(item || {})) {
-    if (["id", "tool", "_children", "txt", "transform"].includes(key)) {
+    if (
+      ["id", "tool", "_children", "txt", "transform", "createdBy"].includes(key)
+    ) {
       continue;
     }
     attrs[key] = value;
@@ -153,6 +168,7 @@ function canonicalItemFromItem(
   const attrs = readInlineAttrs(item);
   const bounds = MessageCommon.getLocalGeometryBounds(item);
   const transform = cloneTransform(item.transform);
+  const createdBy = readCreatedBy(item.createdBy);
   const base = {
     id: item.id,
     tool: item.tool,
@@ -163,6 +179,7 @@ function canonicalItemFromItem(
     ...(transform !== undefined ? { transform } : {}),
     dirty: !persisted,
     time: attrs.time,
+    ...(createdBy !== undefined ? { createdBy } : {}),
   };
 
   switch (payloadKindForTool(item.tool)) {
@@ -205,6 +222,7 @@ function canonicalItemFromStoredSvgEntry(entry, paintOrder) {
   const summary = summarizeStoredSvgItem(entry, paintOrder);
   if (!summary) return null;
   const { attrs, transform } = splitTransform(summary.data);
+  const createdBy = readCreatedBy(summary.createdBy);
   const base = {
     id: summary.id,
     tool: summary.tool,
@@ -215,6 +233,7 @@ function canonicalItemFromStoredSvgEntry(entry, paintOrder) {
     ...(transform !== undefined ? { transform } : {}),
     dirty: false,
     time: attrs.time,
+    ...(createdBy !== undefined ? { createdBy } : {}),
   };
 
   switch (payloadKindForTool(summary.tool)) {
@@ -290,9 +309,20 @@ function currentText(item) {
  * @param {string} newId
  * @param {number} paintOrder
  * @param {number} [time]
+ * @param {string} [createdBy] - The copying operator's Participant Identifier
+ * from the accepted COPY mutation. A copy is a new creation: the source's
+ * creator is always dropped, and the copier (when the acceptance layer
+ * supplied one) is stamped here in the same step. Legacy copies carry no
+ * creator at all.
  * @returns {any}
  */
-function copyCanonicalItem(source, newId, paintOrder, time = Date.now()) {
+function copyCanonicalItem(
+  source,
+  newId,
+  paintOrder,
+  time = Date.now(),
+  createdBy,
+) {
   const copied = cloneCanonicalItem(source);
   copied.id = newId;
   copied.paintOrder = paintOrder;
@@ -301,6 +331,10 @@ function copyCanonicalItem(source, newId, paintOrder, time = Date.now()) {
   copied.time = time;
   copied.attrs = { ...copied.attrs, id: newId, time };
   delete copied.copySource;
+  delete copied.createdBy;
+  if (typeof createdBy === "string" && createdBy !== "") {
+    copied.createdBy = createdBy;
+  }
 
   if (copied.payload?.kind === "text") {
     const sourceText = currentText(source);
@@ -331,6 +365,8 @@ function copyCanonicalItem(source, newId, paintOrder, time = Date.now()) {
 function publicItemFromCanonicalItem(item) {
   if (!item || item.deleted) return undefined;
   const view = publicBaseFromCanonicalItem(item);
+  const createdBy = readCreatedBy(item.createdBy);
+  if (createdBy !== undefined) view.createdBy = createdBy;
   if (item.payload?.kind === "text") {
     const text = currentText(item);
     if (text !== undefined) view.txt = text;

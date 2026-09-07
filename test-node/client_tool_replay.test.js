@@ -1060,6 +1060,7 @@ function createInputToolRuntime(tools) {
     identity: {
       boardName: "input-test",
       token: null,
+      socketIoPath: "",
     },
     preferences: tools.preferences,
     rateLimits: tools.rateLimits,
@@ -1077,6 +1078,7 @@ function createInputToolRuntime(tools) {
       messageForTool: () => unavailableCapability("messages.messageForTool"),
     },
     permissions: tools.access,
+    hostedEventPath: undefined,
   };
 }
 
@@ -1106,6 +1108,7 @@ function createHarnessToolRuntime(app) {
     ids: app.ids,
     messages: app.messages,
     permissions: app.access,
+    hostedEventPath: undefined,
   };
 }
 

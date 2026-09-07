@@ -56,7 +56,7 @@
 
 /** @typedef {string | number} ActionDialogValue */
 /** @typedef {{label: string, value: ActionDialogValue, iconUrl?: string, variant?: "secondary" | "warning" | "danger"}} ActionDialogChoice */
-/** @typedef {{id: string, label?: string, layout: "stacked" | "segmented" | "grid", choices: ActionDialogChoice[], initialValue?: ActionDialogValue, submit?: boolean}} ActionDialogSection */
+/** @typedef {{id: string, label?: string, layout: "stacked" | "segmented" | "grid" | "input", choices: ActionDialogChoice[], initialValue?: ActionDialogValue, submit?: boolean, placeholder?: string, required?: boolean}} ActionDialogSection */
 /** @typedef {{title: string, message?: string, sections: ActionDialogSection[], cancelLabel: string, link?: {label: string, href: string}}} ActionDialogOptions */
 /** @typedef {{sectionId: string, value: ActionDialogValue, selections: Record<string, ActionDialogValue>}} ActionDialogResult */
 
@@ -558,12 +558,52 @@ export function showActionDialog(options) {
       const selections = {};
       /** @type {HTMLButtonElement[]} */
       const allButtons = [];
+      /** @type {HTMLInputElement[]} */
+      const requiredInputs = [];
+      /** @type {HTMLButtonElement[]} */
+      const submitButtons = [];
+      const requiredSatisfied = () =>
+        requiredInputs.every((input) => input.value.trim() !== "");
+      const syncSubmitState = () => {
+        const satisfied = requiredSatisfied();
+        for (const button of submitButtons) {
+          button.disabled = !satisfied;
+        }
+      };
       for (const section of options.sections) {
         if (section.label) {
           const heading = document.createElement("div");
           heading.className = "moderation-action-section-title";
           heading.textContent = section.label;
           dialog.appendChild(heading);
+        }
+        if (section.layout === "input") {
+          const input = document.createElement("input");
+          input.type = "text";
+          input.className = "moderation-action-input";
+          if (section.placeholder) input.placeholder = section.placeholder;
+          if (section.initialValue !== undefined) {
+            input.value = String(section.initialValue);
+          }
+          selections[section.id] = input.value;
+          if (section.required === true) requiredInputs.push(input);
+          input.addEventListener("input", () => {
+            selections[section.id] = input.value;
+            syncSubmitState();
+          });
+          if (section.submit) {
+            input.addEventListener("keydown", (evt) => {
+              if (evt.key !== "Enter" || !requiredSatisfied()) return;
+              evt.preventDefault();
+              settle({
+                sectionId: section.id,
+                value: input.value,
+                selections: { ...selections },
+              });
+            });
+          }
+          dialog.appendChild(input);
+          continue;
         }
         const choices = document.createElement("div");
         choices.className = `moderation-action-${section.layout}`;
@@ -596,6 +636,7 @@ export function showActionDialog(options) {
           button.appendChild(label);
           button.addEventListener("click", () => {
             if (section.submit) {
+              if (!requiredSatisfied()) return;
               settle({
                 sectionId: section.id,
                 value: choice.value,
@@ -613,6 +654,7 @@ export function showActionDialog(options) {
               );
             });
           });
+          if (section.submit) submitButtons.push(button);
           allButtons.push(button);
           choices.appendChild(button);
           return button;

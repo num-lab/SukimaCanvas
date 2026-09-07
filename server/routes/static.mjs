@@ -1,4 +1,5 @@
 import { canonicalizeBoardName } from "../../client-data/js/board_name.js";
+import * as jwtauth from "../auth/jwt.mjs";
 import { serveError } from "../http/observation.mjs";
 import { boardExists } from "../persistence/svg_board_store.mjs";
 import { buildRandomBoardName } from "../shared/pronounceable_name.mjs";
@@ -31,6 +32,42 @@ function serveManifest(ctx) {
       : "public, max-age=3600",
   });
   ctx.response.end(body);
+}
+
+/**
+ * Serves the Hosted Event Service home when enabled and preserves the legacy
+ * WBO root permission check and redirect otherwise.
+ *
+ * @param {HttpRouteContext} ctx
+ * @returns {void | Promise<void>}
+ */
+function serveRoot(ctx) {
+  if (ctx.runtime.hostedEventModule.enabled) {
+    return ctx.runtime.hostedEventModule.serveHome(ctx);
+  }
+  jwtauth.checkUserPermission(ctx.url, ctx.runtime.config);
+  return redirectToDefaultBoard(ctx);
+}
+
+/**
+ * Serves the version-pinned Corresponding Source page in hosted mode. Legacy
+ * WBO has no source disclosure, so the route rejects with a deterministic 404
+ * instead of falling through to static file resolution.
+ *
+ * @param {HttpRouteContext} ctx
+ * @returns {void | Promise<void>}
+ */
+function serveSource(ctx) {
+  if (!ctx.runtime.hostedEventModule.enabled) {
+    serveError(
+      ctx.request,
+      ctx.response,
+      ctx.runtime.errorPage,
+      ctx.observed,
+    )();
+    return;
+  }
+  return ctx.runtime.hostedEventModule.serveSource(ctx);
 }
 
 /**
@@ -114,4 +151,6 @@ export {
   serveRulesPage,
   serveBoardStaticAsset,
   serveStaticAsset,
+  serveRoot,
+  serveSource,
 };

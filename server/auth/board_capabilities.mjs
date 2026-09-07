@@ -13,7 +13,7 @@ import { isConfiguredModerator } from "./board_moderators.mjs";
 
 /** @typedef {{AUTH_SECRET_KEY: string, BOARD_MODERATORS?: Map<string, Set<string>>}} BoardCapabilityConfig */
 /** @typedef {{name: string, readonly?: boolean, isReadOnly?: () => boolean}} BoardCapabilityBoard */
-/** @typedef {{token?: string | null, userSecret?: string | null}} BoardCapabilityUserInfo */
+/** @typedef {{token?: string | null, userSecret?: string | null, hostedRole?: "moderator" | "event_moderator" | "editor" | "reader" | null}} BoardCapabilityUserInfo */
 /** @typedef {() => boolean} IsBannedPredicate */
 /** @typedef {() => number | null} GetBanExpiresAt */
 /** @typedef {() => number | null} GetTemporaryModeratorExpiresAt */
@@ -38,7 +38,9 @@ function isBoardReadOnly(board) {
  * @returns {boolean}
  */
 function isEditCapableRole(role) {
-  return role === "editor" || role === "moderator";
+  return (
+    role === "editor" || role === "moderator" || role === "event_moderator"
+  );
 }
 
 /**
@@ -49,13 +51,37 @@ function isClearCapableRole(role) {
   return role === "moderator";
 }
 
+/** @typedef {"moderator" | "event_moderator" | "editor" | "reader"} HostedRole */
+
 /**
+ * Narrows a pre-verified hosted role; anything else is not one.
+ *
+ * @param {unknown} value
+ * @returns {HostedRole | null}
+ */
+function normalizeHostedRole(value) {
+  return value === "moderator" ||
+    value === "event_moderator" ||
+    value === "editor" ||
+    value === "reader"
+    ? value
+    : null;
+}
+
+/**
+ * Resolves the compatibility role for a board. A pre-verified hosted role
+ * (pinned by Hosted Event admission from the hosted session cookie) wins over
+ * every legacy input: hosted boards never consult JWTs or configured
+ * moderator secrets, and a forged query token cannot escalate it.
+ *
  * @param {BoardCapabilityConfig} config
  * @param {string} boardName
  * @param {BoardCapabilityUserInfo | undefined} userInfo
- * @returns {"moderator" | "editor" | "reader" | "forbidden"}
+ * @returns {"moderator" | "event_moderator" | "editor" | "reader" | "forbidden"}
  */
 function roleForBoard(config, boardName, userInfo) {
+  const hostedRole = normalizeHostedRole(userInfo?.hostedRole);
+  if (hostedRole) return hostedRole;
   if (isConfiguredModerator(config, boardName, userInfo?.userSecret))
     return "moderator";
   if (config.AUTH_SECRET_KEY === "") return "editor";
@@ -97,15 +123,26 @@ function capabilitiesGrant(capabilities, capability) {
 function forBoard(input) {
   const jwtEnabled = input.config.AUTH_SECRET_KEY !== "";
   const role = roleForBoard(input.config, input.boardName, input.userInfo);
+  // A hosted admission role is pre-verified by the Hosted Event Module and
+  // strictly stronger than the legacy role semantics: its "reader" is
+  // read-only on every board, not only on metadata-readonly ones.
+  const hostedRoleGranted =
+    normalizeHostedRole(input.userInfo?.hostedRole) !== null;
   const permanentModerator = isClearCapableRole(role);
+  // An Event Moderator (a per-event hosted grant) may warn, kick, and ban
+  // within its event but never holds the destructive Clear.
+  const hostedEventModerator =
+    normalizeHostedRole(input.userInfo?.hostedRole) === "event_moderator";
   const fallbackIsBanned = input.isBanned || (() => false);
 
   /**
    * Reads one coherent ban snapshot for a capability response. Expiry-aware
    * callers return only active expiries; the defensive wall-clock check keeps
    * stale or malformed values from scheduling needless refreshes.
+   * `moderator` carries the Clear-capable moderator state; `banCapable` is
+   * the broader moderation capability that also covers Event Moderators.
    *
-   * @returns {{moderator: boolean, banned: boolean, refreshAfterMs: number | null}}
+   * @returns {{moderator: boolean, banCapable: boolean, banned: boolean, refreshAfterMs: number | null}}
    */
   function readAccessState() {
     const now = Date.now();
@@ -113,11 +150,17 @@ function forBoard(input) {
       ? 0
       : Number(input.getTemporaryModeratorExpiresAt?.());
     if (permanentModerator) {
-      return { moderator: true, banned: false, refreshAfterMs: null };
+      return {
+        moderator: true,
+        banCapable: true,
+        banned: false,
+        refreshAfterMs: null,
+      };
     }
     if (temporaryModeratorExpiresAt > now) {
       return {
         moderator: true,
+        banCapable: true,
         banned: false,
         refreshAfterMs: Math.floor(temporaryModeratorExpiresAt - now),
       };
@@ -125,16 +168,23 @@ function forBoard(input) {
     if (!input.getBanExpiresAt) {
       return {
         moderator: false,
+        banCapable: hostedEventModerator,
         banned: fallbackIsBanned(),
         refreshAfterMs: null,
       };
     }
     const expiresAt = Number(input.getBanExpiresAt());
     if (!Number.isFinite(expiresAt) || expiresAt <= now) {
-      return { moderator: false, banned: false, refreshAfterMs: null };
+      return {
+        moderator: false,
+        banCapable: hostedEventModerator,
+        banned: false,
+        refreshAfterMs: null,
+      };
     }
     return {
       moderator: false,
+      banCapable: hostedEventModerator,
       banned: true,
       refreshAfterMs: Math.max(0, Math.floor(expiresAt - now)),
     };
@@ -166,7 +216,7 @@ function forBoard(input) {
     if (!jwtEnabled && !accessState.moderator) {
       return {
         canOpen: true,
-        canEdit: !readonly && !accessState.banned,
+        canEdit: !readonly && !accessState.banned && !hostedReader(),
         canClear: false,
       };
     }
@@ -178,9 +228,20 @@ function forBoard(input) {
       canEdit:
         open &&
         !accessState.banned &&
+        !hostedReader() &&
         (!readonly || accessState.moderator || isEditCapableRole(role)),
       canClear: accessState.moderator,
     };
+  }
+
+  /**
+   * Whether this resolver's identity is a hosted read-only connection (an
+   * extra tab or device of a seated member).
+   *
+   * @returns {boolean}
+   */
+  function hostedReader() {
+    return hostedRoleGranted && role === "reader";
   }
 
   /**
@@ -200,7 +261,7 @@ function forBoard(input) {
     const capabilities = resolveCapabilitiesForAccessState(board, accessState);
     return {
       ...boardStateForCapabilities(board, capabilities),
-      canBan: accessState.moderator,
+      canBan: accessState.banCapable,
       canGrantTemporaryModerator: permanentModerator,
       canReport: capabilities.canOpen && !accessState.banned,
       ...(accessState.refreshAfterMs === null
@@ -235,7 +296,7 @@ function forBoard(input) {
     boardState,
     requireOpen,
     canApplyBoardMessage,
-    canBan: () => readAccessState().moderator,
+    canBan: () => readAccessState().banCapable,
     canGrantTemporaryModerator: () => permanentModerator,
   };
 }

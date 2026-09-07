@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const { MutationType } = require("../client-data/js/message_tool_metadata.js");
 const {
   Eraser,
+  Hand,
   Pencil,
   Rectangle,
   Text,
@@ -420,4 +421,354 @@ test("board session appends sequenced followups generated during successful acce
       },
     ],
   });
+});
+
+const OPERATOR = {
+  eventId: "evt-1",
+  boardSessionId: "bs-1",
+  accountId: "acct-1",
+  participantId: "p0f2a7c9d1e3f4a5b",
+};
+
+test("hosted acceptance stamps the operator identity and gates on the durable ledger", async () => {
+  const { createBoardSession } = await loadBoardSession();
+  /** @type {any[]} */
+  const appended = [];
+  /** @type {any[]} */
+  const recorded = [];
+  let seq = 0;
+  const board = {
+    name: "event-attributed",
+    getSeq() {
+      return seq;
+    },
+    mutationLedger: {
+      async appendEntries(/** @type {any[]} */ entries) {
+        appended.push(...entries);
+      },
+    },
+    processMessage(/** @type {any} */ _message) {
+      return { ok: true };
+    },
+    recordPersistentMutation(
+      /** @type {any} */ message,
+      /** @type {any} */ acceptedAtMs,
+      /** @type {any} */ explicitSeq,
+    ) {
+      seq = explicitSeq;
+      recorded.push({ message, acceptedAtMs, explicitSeq });
+      return { seq: explicitSeq, acceptedAtMs, mutation: message };
+    },
+  };
+
+  const result = await createBoardSession(board).acceptPersistentMutation(
+    {
+      tool: Rectangle.id,
+      type: MutationType.CREATE,
+      id: "rect-1",
+      color: "#123456",
+      size: 4,
+      x: 0,
+      y: 0,
+      x2: 10,
+      y2: 10,
+      clientMutationId: "cm-1",
+    },
+    77,
+    OPERATOR,
+  );
+
+  assert.equal(result.ok, true);
+  // The sender is confirmed only after the ledger entry was appended.
+  assert.deepEqual(appended, [
+    {
+      seq: 1,
+      acceptedAtMs: 77,
+      eventId: "evt-1",
+      boardSessionId: "bs-1",
+      accountId: "acct-1",
+      mutation: {
+        tool: Rectangle.id,
+        type: MutationType.CREATE,
+        id: "rect-1",
+        color: "#123456",
+        size: 4,
+        x: 0,
+        y: 0,
+        x2: 10,
+        y2: 10,
+        clientMutationId: "cm-1",
+        createdBy: "p0f2a7c9d1e3f4a5b",
+      },
+    },
+  ]);
+  assert.deepEqual(recorded, [
+    {
+      message: appended[0]?.mutation,
+      acceptedAtMs: 77,
+      explicitSeq: 1,
+    },
+  ]);
+  assert.equal(result.entry.seq, 1);
+});
+
+test("hosted acceptance stamps batch children that create items", async () => {
+  const { createBoardSession } = await loadBoardSession();
+  /** @type {any[]} */
+  const appended = [];
+  const board = {
+    name: "event-batch-attributed",
+    getSeq() {
+      return 0;
+    },
+    mutationLedger: {
+      async appendEntries(/** @type {any[]} */ entries) {
+        appended.push(...entries);
+      },
+    },
+    processMessage() {
+      return { ok: true };
+    },
+    recordPersistentMutation(
+      /** @type {any} */ _m,
+      /** @type {any} */ _t,
+      /** @type {any} */ s,
+    ) {
+      return { seq: s, mutation: _m };
+    },
+  };
+
+  await createBoardSession(board).acceptPersistentMutation(
+    {
+      tool: Hand.id,
+      clientMutationId: "cm-batch-1",
+      _children: [
+        {
+          type: MutationType.UPDATE,
+          id: "rect-1",
+          transform: { a: 1, b: 0, c: 0, d: 1, e: 5, f: 5 },
+        },
+        {
+          type: MutationType.COPY,
+          id: "rect-1",
+          newid: "rect-1-copy",
+        },
+      ],
+    },
+    10,
+    OPERATOR,
+  );
+
+  const children = appended[0].mutation._children;
+  assert.equal(children[0].createdBy, undefined);
+  assert.equal(children[1].createdBy, "p0f2a7c9d1e3f4a5b");
+});
+
+test("a failed ledger append rejects the mutation without recording it", async () => {
+  const { createBoardSession } = await loadBoardSession();
+  let recordedCount = 0;
+  const board = {
+    name: "event-ledger-failure",
+    getSeq() {
+      return 0;
+    },
+    mutationLedger: {
+      async appendEntries() {
+        throw new Error("disk on fire");
+      },
+    },
+    processMessage() {
+      return { ok: true };
+    },
+    recordPersistentMutation() {
+      recordedCount += 1;
+      return { seq: 1 };
+    },
+  };
+
+  const result = await createBoardSession(board).acceptPersistentMutation(
+    {
+      tool: Rectangle.id,
+      type: MutationType.CREATE,
+      id: "rect-1",
+      color: "#123456",
+      size: 4,
+      x: 0,
+      y: 0,
+      x2: 10,
+      y2: 10,
+      clientMutationId: "cm-1",
+    },
+    5,
+    OPERATOR,
+  );
+
+  assert.deepEqual(result, { ok: false, reason: "ledger_unavailable" });
+  assert.equal(recordedCount, 0);
+});
+
+test("a hosted acceptance without a ledger adapter is refused, never silently degraded", async () => {
+  const { createBoardSession } = await loadBoardSession();
+  let processed = 0;
+  const board = {
+    name: "event-no-ledger",
+    getSeq() {
+      return 0;
+    },
+    processMessage() {
+      processed += 1;
+      return { ok: true };
+    },
+    recordPersistentMutation() {
+      return { seq: 1 };
+    },
+  };
+
+  const result = await createBoardSession(board).acceptPersistentMutation(
+    {
+      tool: Rectangle.id,
+      type: MutationType.CREATE,
+      id: "rect-1",
+      color: "#123456",
+      size: 4,
+      x: 0,
+      y: 0,
+      x2: 10,
+      y2: 10,
+    },
+    5,
+    OPERATOR,
+  );
+
+  assert.deepEqual(result, { ok: false, reason: "ledger_unavailable" });
+  assert.equal(processed, 0);
+});
+
+test("duplicate client mutation ids reuse the original acceptance exactly once", async () => {
+  const { createBoardSession } = await loadBoardSession();
+  /** @type {any[]} */
+  const appended = [];
+  let processCount = 0;
+  let seq = 0;
+  const board = {
+    name: "event-dedupe",
+    getSeq() {
+      return seq;
+    },
+    mutationLedger: {
+      async appendEntries(/** @type {any[]} */ entries) {
+        appended.push(...entries);
+      },
+    },
+    processMessage(/** @type {any} */ _message) {
+      processCount += 1;
+      return { ok: true };
+    },
+    recordPersistentMutation(
+      /** @type {any} */ message,
+      /** @type {any} */ acceptedAtMs,
+      /** @type {any} */ explicitSeq,
+    ) {
+      seq = explicitSeq;
+      return { seq: explicitSeq, acceptedAtMs, mutation: message };
+    },
+  };
+  const session = createBoardSession(board);
+  const mutation = {
+    tool: Rectangle.id,
+    type: MutationType.CREATE,
+    id: "rect-dup",
+    color: "#123456",
+    size: 4,
+    x: 0,
+    y: 0,
+    x2: 10,
+    y2: 10,
+    clientMutationId: "cm-dup-1",
+  };
+
+  const first = await session.acceptPersistentMutation(mutation, 1, OPERATOR);
+  const second = await session.acceptPersistentMutation(mutation, 2, OPERATOR);
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(second.entry.seq, first.entry.seq);
+  assert.equal(second.entry.acceptedAtMs, first.entry.acceptedAtMs);
+  assert.equal(processCount, 1);
+  assert.equal(appended.length, 1);
+  assert.equal(appended[0].seq, 1);
+  // The retried mutation carries no second record in the in-memory log.
+  assert.equal(board.getSeq(), 1);
+});
+
+test("replayed ledger entries restore duplicate tracking after a reload", async () => {
+  const { createBoardSession } = await loadBoardSession();
+  let processCount = 0;
+  /** @type {any[]} */
+  const appended = [];
+  const board = {
+    name: "event-replay-dedupe",
+    getSeq() {
+      return 1;
+    },
+    mutationLedger: {
+      async appendEntries(/** @type {any[]} */ entries) {
+        appended.push(...entries);
+      },
+    },
+    processMessage() {
+      processCount += 1;
+      return { ok: true };
+    },
+    recordPersistentMutation(
+      /** @type {any} */ _m,
+      /** @type {any} */ _t,
+      /** @type {any} */ s,
+    ) {
+      return { seq: s, mutation: _m };
+    },
+  };
+  const session = createBoardSession(board);
+  session.noteReplayedLedgerEntry({
+    seq: 1,
+    acceptedAtMs: 42,
+    eventId: "evt-1",
+    boardSessionId: "bs-1",
+    accountId: "acct-1",
+    mutation: {
+      tool: Rectangle.id,
+      type: MutationType.CREATE,
+      id: "rect-replayed",
+      color: "#123456",
+      size: 4,
+      x: 0,
+      y: 0,
+      x2: 10,
+      y2: 10,
+      clientMutationId: "cm-replayed-1",
+      createdBy: "p0f2a7c9d1e3f4a5b",
+    },
+  });
+
+  const result = await session.acceptPersistentMutation(
+    {
+      tool: Rectangle.id,
+      type: MutationType.CREATE,
+      id: "rect-replayed",
+      color: "#123456",
+      size: 4,
+      x: 0,
+      y: 0,
+      x2: 10,
+      y2: 10,
+      clientMutationId: "cm-replayed-1",
+    },
+    43,
+    OPERATOR,
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.entry.seq, 1);
+  assert.equal(processCount, 0);
+  assert.equal(appended.length, 0);
 });

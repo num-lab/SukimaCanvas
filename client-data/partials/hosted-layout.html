@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="{{hostedLanguage}}" dir="{{hostedDirection}}">
+  <head>
+    <meta charset="utf-8" />
+    <title>{{pageTitle}}{{#if appendServiceName}} — {{hostedTranslations.hosted_service_name}}{{/if}}</title>
+    <base href="{{baseHref}}" />
+    <link rel="stylesheet" href="hosted.css" />
+    {{#if pageDescription}}
+    <meta name="description" content="{{pageDescription}}" />
+    {{/if}}
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    {{#if noIndex}}
+    <meta name="robots" content="noindex, nofollow" />
+    {{/if}}
+    <link rel="icon" type="image/x-icon" sizes="16x16" href="favicon.ico" />
+    {{#unless omitAppleTouchIcon}}
+    <link rel="apple-touch-icon" href="favicon.svg" />
+    {{/unless}}
+    {{#if canonical}}
+    <link rel="canonical" href="{{hostedCanonicalUrl}}" />
+    {{#hostedLanguageLinks}}
+    <link rel="alternate" hreflang="{{language}}" href="{{href}}" />
+    {{/hostedLanguageLinks}}
+    {{/if}}
+    {{{htmlHeadSnippet}}}
+  </head>
+  <body class="hosted-shell">
+    <header class="hosted-header">
+      <a class="hosted-brand" href=".">SukimaCanvas</a>
+      <nav aria-label="{{hostedTranslations.hosted_language_label}}">
+        {{#if homeOnlyNavigation}}
+        <a href=".">{{hostedTranslations.hosted_back_home}}</a>
+        {{else}}
+        {{#if hostedAccount}}
+        <span class="hosted-account-email">{{hostedAccount.email}}</span>
+        <a href="account">{{hostedTranslations.hosted_nav_account}}</a>
+        {{#if workspaceNavigation}}
+        <a href="organizer">{{hostedTranslations.hosted_nav_organizer}}</a>
+        {{#if hostedAccount.isOperator}}
+        <a href="operator">{{hostedTranslations.hosted_nav_operator}}</a>
+        {{/if}}
+        {{/if}}
+        <a href="logout">{{hostedTranslations.hosted_nav_logout}}</a>
+        {{else}}
+        <a href="login">{{hostedTranslations.hosted_nav_login}}</a>
+        <a href="register">{{hostedTranslations.hosted_nav_register}}</a>
+        {{/if}}
+
+        <details class="hosted-language-picker">
+          <summary>{{hostedLanguage}}</summary>
+          <ul>
+            {{#hostedLanguageLinks}}
+            <li><a href="{{href}}" hreflang="{{language}}">{{language}}</a></li>
+            {{/hostedLanguageLinks}}
+          </ul>
+        </details>
+        {{/if}}
+      </nav>
+    </header>
+
+    {{> @partial-block}}
+
+    <footer class="hosted-footer">
+      {{#if homeOnlyNavigation}}
+      <a href=".">{{hostedTranslations.hosted_back_home}}</a>
+      {{else}}
+      <span>{{hostedTranslations.hosted_service_name}}</span>
+      <a href="source">{{hostedTranslations.hosted_source_link}}</a>
+      {{/if}}
+    </footer>
+    {{#if pageScript}}
+    <script src="{{pageScript}}" defer></script>
+    {{/if}}
+  </body>
+</html>

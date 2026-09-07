@@ -2,12 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import handlebars from "handlebars";
-
+import { MODERATION_RULES } from "../../client-data/js/moderation_rules.js";
 import {
   boardStateGrantsCapability,
   TOOLBAR_TOOLS,
 } from "../../client-data/tools/manifest.js";
-import { MODERATION_RULES } from "../../client-data/js/moderation_rules.js";
 import { createClientConfiguration } from "./client_configuration.mjs";
 import { startCompressedResponse } from "./compression.mjs";
 import { parseRequestUrl } from "./request_url.mjs";
@@ -22,7 +21,9 @@ import { parseRequestUrl } from "./request_url.mjs";
 /** @typedef {NonNullable<typeof TOOLBAR_TOOLS[number]>} ToolbarTool */
 /** @typedef {import("./client_configuration.mjs").ClientConfiguration} ClientConfig */
 /** @typedef {"zstd" | "br" | "gzip"} CompressionEncoding */
-/** @typedef {{htmlHeadSnippet?: string}} TemplateOptions */
+/**
+ * @typedef {{htmlHeadSnippet?: string, supportedLanguages?: string[], languageMatching?: "loose" | "strict", partials?: {[name: string]: string}}} TemplateOptions
+ */
 /** @import { ServerConfig } from "../../types/server-runtime.d.ts" */
 
 const HTTP_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -150,13 +151,38 @@ function pickLanguage(supportedLanguages, acceptedLanguages) {
 }
 
 /**
+ * Match the small language set used by an independently branded shell. Exact
+ * locale families are handled explicitly so an unsupported regional variant
+ * (for example `zh-TW`) does not silently select `zh-CN`.
+ *
+ * @param {string[]} supportedLanguages
+ * @param {{tag: string, quality: number}[]} acceptedLanguages
+ * @returns {string | undefined}
+ */
+function pickStrictLanguage(supportedLanguages, acceptedLanguages) {
+  for (const accepted of acceptedLanguages) {
+    if (accepted.tag === "*") return supportedLanguages[0];
+    if (supportedLanguages.includes(accepted.tag)) return accepted.tag;
+    const base = localeBase(accepted.tag);
+    if (base === "en" && supportedLanguages.includes("en")) return "en";
+    if (accepted.tag === "zh" && supportedLanguages.includes("zh-CN")) {
+      return "zh-CN";
+    }
+  }
+  return undefined;
+}
+
+/**
  * @param {TemplateRequest} req
  * @returns {string}
  */
 function findBaseUrl(req) {
+  // The socket can already be detached when rendering an error page for an
+  // aborted request, so treat it as optional.
+  const socket = req.socket;
   const proto =
     firstHeaderValue(req.headers["x-forwarded-proto"]) ||
-    ("encrypted" in req.socket && req.socket.encrypted ? "https" : "http");
+    (socket && "encrypted" in socket && socket.encrypted ? "https" : "http");
   const host =
     firstHeaderValue(req.headers["x-forwarded-host"]) ||
     firstHeaderValue(req.headers.host) ||
@@ -182,12 +208,21 @@ function findPathPrefix(pathname) {
 /**
  * @param {string} baseUrl
  * @param {string} language
+ * @returns {string}
+ */
+function localizedHref(baseUrl, language) {
+  const url = new URL(baseUrl);
+  url.searchParams.set("lang", language);
+  return url.href;
+}
+
+/**
+ * @param {string} baseUrl
+ * @param {string} language
  * @returns {handlebars.SafeString}
  */
 function localizedUrl(baseUrl, language) {
-  const url = new URL(baseUrl);
-  url.searchParams.set("lang", language);
-  return new handlebars.SafeString(url.href);
+  return new handlebars.SafeString(localizedHref(baseUrl, language));
 }
 
 /**
@@ -224,7 +259,7 @@ function htmlVaryHeaders(parsedUrl, parameters) {
 }
 
 const startHtmlResponse =
-  /** @type {(response: TemplateResponse, request: TemplateRequest, parsedUrl: URL, parameters: TemplateParameters, cacheControlValue: string, contentLength?: number) => { stream: import("stream").Writable, encoding: import("./compression.mjs").CompressionEncoding | undefined }} */
+  /** @type {(response: TemplateResponse, request: TemplateRequest, parsedUrl: URL, parameters: TemplateParameters, cacheControlValue: string, contentLength?: number, statusCode?: number) => { stream: import("stream").Writable, encoding: import("./compression.mjs").CompressionEncoding | undefined }} */
   (
     response,
     request,
@@ -232,16 +267,24 @@ const startHtmlResponse =
     parameters,
     cacheControlValue,
     contentLength,
+    statusCode = 200,
   ) =>
-    startCompressedResponse(response, request.headers["accept-encoding"], {
-      ...(contentLength === undefined
-        ? {}
-        : { "Content-Length": contentLength }),
-      "Content-Type": "text/html",
-      "Cache-Control": cacheControlValue,
-      ...(typeof parameters.etag === "string" ? { ETag: parameters.etag } : {}),
-      ...htmlVaryHeaders(parsedUrl, parameters),
-    });
+    startCompressedResponse(
+      response,
+      request.headers["accept-encoding"],
+      {
+        ...(contentLength === undefined
+          ? {}
+          : { "Content-Length": contentLength }),
+        "Content-Type": "text/html",
+        "Cache-Control": cacheControlValue,
+        ...(typeof parameters.etag === "string"
+          ? { ETag: parameters.etag }
+          : {}),
+        ...htmlVaryHeaders(parsedUrl, parameters),
+      },
+      statusCode,
+    );
 
 class StaticTemplate {
   /** @type {string} */
@@ -250,8 +293,11 @@ class StaticTemplate {
   /** @type {string} */
   htmlHeadSnippet;
 
-  /** @type {(parameters: {[name: string]: any}) => string} */
+  /** @type {(parameters: {[name: string]: any}, options?: {partials?: {[name: string]: string}}) => string} */
   template;
+
+  /** @type {{[name: string]: string}} */
+  partials;
 
   /**
    * @param {string} templatePath
@@ -262,6 +308,7 @@ class StaticTemplate {
     this.templateContents = contents;
     this.htmlHeadSnippet = options?.htmlHeadSnippet || "";
     this.template = handlebars.compile(contents);
+    this.partials = options?.partials || {};
   }
 
   /**
@@ -269,10 +316,13 @@ class StaticTemplate {
    * @returns {string}
    */
   render(parameters = {}) {
-    return this.template({
-      htmlHeadSnippet: this.htmlHeadSnippet,
-      ...parameters,
-    });
+    return this.template(
+      {
+        htmlHeadSnippet: this.htmlHeadSnippet,
+        ...parameters,
+      },
+      { partials: this.partials },
+    );
   }
 }
 
@@ -283,6 +333,12 @@ class Template extends StaticTemplate {
   /** @type {ClientConfig} */
   clientConfig;
 
+  /** @type {string[]} */
+  supportedLanguages;
+
+  /** @type {"loose" | "strict"} */
+  languageMatching;
+
   /**
    * @param {string} templatePath
    * @param {ServerConfig} serverConfig
@@ -292,6 +348,8 @@ class Template extends StaticTemplate {
     super(templatePath, options);
     this.serverConfig = serverConfig;
     this.clientConfig = createClientConfiguration(serverConfig);
+    this.supportedLanguages = options?.supportedLanguages || languages;
+    this.languageMatching = options?.languageMatching || "loose";
   }
 
   /**
@@ -307,14 +365,22 @@ class Template extends StaticTemplate {
       firstHeaderValue(request.headers["accept-language"]) ||
       "";
     const accept_languages = parseAcceptLanguage(accept_language_str);
-    let language = pickLanguage(languages, accept_languages) || "en";
+    const selectedLanguage =
+      this.languageMatching === "strict"
+        ? pickStrictLanguage(this.supportedLanguages, accept_languages)
+        : pickLanguage(this.supportedLanguages, accept_languages);
+    let language =
+      selectedLanguage ||
+      (this.supportedLanguages.includes("en")
+        ? "en"
+        : this.supportedLanguages[0] || "en");
     // The loose matcher returns the first language that partially matches, so we need to
     // check if the preferred language is supported to return it
     if (accept_languages.length > 0) {
       const preferred = accept_languages[0];
       if (preferred) {
         const preferred_language = preferred.tag;
-        if (languages.includes(preferred_language)) {
+        if (this.supportedLanguages.includes(preferred_language)) {
           language = preferred_language;
         }
       }
@@ -325,20 +391,23 @@ class Template extends StaticTemplate {
       findPathPrefix(parsedUrl.pathname) ||
       this.serverConfig.BASE_PATH.slice(1);
     const baseUrl = findBaseUrl(request) + (prefix ? `/${prefix}/` : "");
+    const baseHref = new URL(".", baseUrl).href;
     const moderator = isModerator;
     return {
       baseUrl,
-      baseHref: new URL(".", baseUrl).href,
-      languages,
-      languageLinks: localizedLinks(languages, (linkLanguage) =>
+      baseHref,
+      languages: this.supportedLanguages,
+      languageLinks: localizedLinks(this.supportedLanguages, (linkLanguage) =>
         localizedUrl(baseUrl, linkLanguage),
       ),
       language,
       direction: language === "ar" ? "rtl" : "ltr",
       canonicalUrl: localizedUrl(baseUrl, language),
+      hostedSourceHref: new URL("source", baseHref).href,
       translations,
       configuration,
       moderator,
+      hostedMode: this.serverConfig.HOSTED_MODE === true,
       htmlHeadSnippet: this.htmlHeadSnippet,
       ...extraParams,
     };
@@ -352,6 +421,18 @@ class Template extends StaticTemplate {
    * @returns {{encoding: CompressionEncoding | undefined}}
    */
   serve(request, response, isModerator, extraParams) {
+    return this.serveStatus(request, response, 200, isModerator, extraParams);
+  }
+
+  /**
+   * @param {TemplateRequest} request
+   * @param {TemplateResponse} response
+   * @param {number} statusCode
+   * @param {boolean} [isModerator]
+   * @param {object} [extraParams]
+   * @returns {{encoding: CompressionEncoding | undefined}}
+   */
+  serveStatus(request, response, statusCode, isModerator, extraParams) {
     const parsedUrl = parseRequestUrl(request.url);
     const parameters = this.parameters(
       parsedUrl,
@@ -365,8 +446,9 @@ class Template extends StaticTemplate {
       request,
       parsedUrl,
       parameters,
-      this.cacheControl(),
+      statusCode >= 500 ? "no-store" : this.cacheControl(),
       Buffer.byteLength(body),
+      statusCode,
     );
     stream.end(body);
     return { encoding };
@@ -380,6 +462,23 @@ class Template extends StaticTemplate {
   renderForRequest(request, extraParams) {
     const parsedUrl = parseRequestUrl(request.url);
     return this.render(this.parameters(parsedUrl, request, false, extraParams));
+  }
+
+  /**
+   * Resolves the negotiated language and its dictionary for a request without
+   * rendering, so server-side flows (form errors, email copy) reuse the same
+   * localization rules as templates.
+   *
+   * @param {TemplateRequest} request
+   * @param {URL} parsedUrl
+   * @returns {{language: string, translations: TranslationDictionary}}
+   */
+  translationsFor(request, parsedUrl) {
+    const parameters = this.parameters(parsedUrl, request, false, {});
+    return {
+      language: parameters.language,
+      translations: parameters.translations,
+    };
   }
 
   /**
@@ -435,6 +534,22 @@ class BoardTemplate extends Template {
       .href;
     params.boardUriComponent = boardUriComponent;
     params.board = decodeURIComponent(boardUriComponent);
+    // The browser may reach this shell through a URL that is not a /boards/
+    // path (the Hosted Event board page), so the client boot prefers the
+    // server-computed identity over deriving it from the location.
+    params.socketIoPath = `${this.serverConfig?.BASE_PATH || ""}/socket.io`;
+    const hostedEventPath = /** @type {string | undefined} */ (
+      /** @type {Record<string, unknown>} */ (extraParams || {})[
+        "hostedEventPath"
+      ]
+    );
+    params.boardIdentity = {
+      board: params.board,
+      socketIoPath: params.socketIoPath,
+      // Hosted Event boards embed the event page path so the client can
+      // route admission refusals back to the event page. Absent on legacy.
+      ...(hostedEventPath ? { hostedEventPath } : {}),
+    };
     params.canonicalUrl = localizedUrl(boardBaseUrl, params.language);
     params.languageLinks = localizedLinks(params.languages, (linkLanguage) =>
       localizedUrl(boardBaseUrl, linkLanguage),
@@ -567,4 +682,10 @@ class RulesTemplate extends Template {
   }
 }
 
-export { BoardTemplate, RulesTemplate, StaticTemplate, Template };
+export {
+  BoardTemplate,
+  localizedHref,
+  RulesTemplate,
+  StaticTemplate,
+  Template,
+};

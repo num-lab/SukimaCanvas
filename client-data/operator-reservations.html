@@ -1,0 +1,34 @@
+{{#> hosted-layout
+  pageTitle=hostedTranslations.hosted_operator_reservations_title
+  canonical=true
+  workspaceNavigation=true
+}}
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-operator-reservations-title">
+        <h1 id="hosted-operator-reservations-title">{{hostedTranslations.hosted_operator_reservations_title}}</h1>
+        <p class="hosted-account-intro">{{hostedTranslations.hosted_operator_reservations_intro}}</p>
+        <p class="hosted-account-alt">
+          <a href="operator">{{hostedTranslations.hosted_operator_back_to_console}}</a>
+          ·
+          <a href="operator/changes">{{hostedTranslations.hosted_operator_changes_title}}</a>
+        </p>
+
+        {{#if hostedOperatorHasReservations}}
+        <ul class="hosted-operator-queue">
+          {{#hostedOperatorReservations}}
+          <li class="hosted-operator-queue-item">
+            <div class="hosted-operator-queue-meta">
+              <span class="hosted-operator-queue-name">{{eventName}}</span>
+              <span>{{../hostedTranslations.hosted_operator_reservation_organizer}}: {{organizerName}}</span>
+              <span>{{startsAt}} · {{requestedSeats}} {{../hostedTranslations.hosted_reservation_seats_suffix}}</span>
+            </div>
+            <a class="hosted-primary-link" href="operator/reservations/{{reservationId}}">{{../hostedTranslations.hosted_operator_queue_review}}</a>
+          </li>
+          {{/hostedOperatorReservations}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_operator_reservations_empty}}</p>
+        {{/if}}
+      </section>
+    </main>
+{{/hosted-layout}}

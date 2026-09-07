@@ -81,21 +81,27 @@ function readStoredSvgAttribute(entry, name) {
   return readRawAttribute(entry?.rawAttributes, name);
 }
 
+/** Root attribute carrying an item's immutable creator on stored SVG items. */
+const CREATED_BY_ATTRIBUTE = "data-wbo-created-by";
+
 /**
- * @param {{attributes?: {[name: string]: string}, rawAttributes?: string, id?: string}} entry
- * @returns {{id: string | undefined, opacity: number | undefined, transform: {a: number, b: number, c: number, d: number, e: number, f: number} | undefined}}
+ * @param {{tagName: string, attributes?: {[name: string]: string}, rawAttributes?: string, id?: string}} entry
+ * @returns {{id: string | undefined, opacity: number | undefined, transform: {a: number, b: number, c: number, d: number, e: number, f: number} | undefined, createdBy: string | undefined}}
  */
 function readStoredSvgBase(entry) {
   const id =
     typeof entry?.id === "string"
       ? entry.id
       : readStoredSvgAttribute(entry, "id");
+  const createdBy = readStoredSvgAttribute(entry, CREATED_BY_ATTRIBUTE);
   return {
     id,
     opacity: parseNumber(readStoredSvgAttribute(entry, "opacity")),
     transform: parseTransformAttribute(
       readStoredSvgAttribute(entry, "transform"),
     ),
+    createdBy:
+      typeof createdBy === "string" && createdBy !== "" ? createdBy : undefined,
   };
 }
 
@@ -149,21 +155,48 @@ function parseStoredSvgItem(entry) {
  */
 function summarizeStoredSvgItem(entry, paintOrder) {
   if (!entry || typeof entry.tagName !== "string") return null;
-  const { id, opacity, transform } = readStoredSvgBase(entry);
+  const { id, opacity, transform, createdBy } = readStoredSvgBase(entry);
   if (!id) return null;
   const contract = TOOL_BY_STORED_TAG_NAME[entry.tagName];
-  if (contract) {
-    return contract.summarizeStoredSvgItem(entry, paintOrder, {
-      id,
-      opacity,
-      transform,
-      decorateStoredItemData,
-      decodedTextLength,
-      parseNumber,
-      readStoredSvgAttribute,
-    });
+  if (!contract) return null;
+  const summary = contract.summarizeStoredSvgItem(entry, paintOrder, {
+    id,
+    opacity,
+    transform,
+    decorateStoredItemData,
+    decodedTextLength,
+    parseNumber,
+    readStoredSvgAttribute,
+  });
+  if (!summary) return null;
+  // Item attribution round-trips through one root attribute so every tool's
+  // stored-item contract preserves it without declaring it per tool.
+  return createdBy === undefined ? summary : { ...summary, createdBy };
+}
+
+/**
+ * Injects an item's immutable creator attribute into a serialized stored-item
+ * tag. Tags are contract-rendered strings; the creator is inserted at the end
+ * of the opening tag, which is the first `>` in the serialized output.
+ *
+ * @param {any} item
+ * @param {string} serialized
+ * @returns {string}
+ */
+function decorateSerializedItemWithCreatedBy(item, serialized) {
+  if (
+    !serialized ||
+    typeof item?.createdBy !== "string" ||
+    item.createdBy === ""
+  ) {
+    return serialized;
   }
-  return null;
+  const openTagEnd = serialized.indexOf(">");
+  if (openTagEnd === -1) return serialized;
+  const attribute = ` ${CREATED_BY_ATTRIBUTE}="${escapeHtml(item.createdBy)}"`;
+  return (
+    serialized.slice(0, openTagEnd) + attribute + serialized.slice(openTagEnd)
+  );
 }
 
 /**
@@ -176,11 +209,12 @@ function serializeStoredSvgItem(item) {
   }
   const contract = TOOL_BY_ID[item.tool];
   if (contract && typeof contract.serializeStoredSvgItem === "function") {
-    return contract.serializeStoredSvgItem(item, {
+    const serialized = contract.serializeStoredSvgItem(item, {
       escapeHtml,
       numberOrZero,
       renderTransformAttribute,
     });
+    return decorateSerializedItemWithCreatedBy(item, serialized);
   }
   return "";
 }

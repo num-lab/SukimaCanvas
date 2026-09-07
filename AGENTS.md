@@ -15,7 +15,33 @@ agents changing the repository.
 - Local baseline: `npm install`, then `npm test`.
 - `npm test` runs the Node suite, Playwright suite, and Biome lint. It does not run typecheck or benchmarks.
 - Use `npm run typecheck` for the unified JS typecheck.
-- Use `npm run bench` before and after changes, only for suspected hot-path, persistence, replay, or broadcast-throughput changes.
+- Use `npm run bench` before and after changes, only for suspected hot-path, persistence, replay, broadcast-throughput, archive-close, or image-export changes.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked as local Markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the default canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repo using root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
+
+### Operations
+
+Backup/PITR and recovery procedures, capacity commitments, alert hygiene,
+and the deployment constraints live in `docs/operations/runbook.md`; the
+recorded launch evidence (RPO/RTO drill, capacity rejection proofs,
+benchmark baselines, open items) lives in
+`docs/operations/launch-evidence.md`; standing an instance up (required
+configuration, HTTPS and proxy requirements, data roots, first-Organizer
+bootstrap) lives in `docs/operations/deployment.md`. Update them when the
+durability contract, capacity limits, metric inventory, or startup
+configuration change.
 
 ## source of truth
 
@@ -39,6 +65,211 @@ Runtime logging, metrics, and tracing start from
 in [logging.mjs](./server/observability/logging.mjs) and metric utilities in
 [metric_helpers.mjs](./server/observability/metric_helpers.mjs).
 `WBO_BASE_PATH` public path handling lives with request URL parsing.
+
+The Hosted Event Service shell is composed into the same runtime by
+[hosted_event/module.mjs](./server/hosted_event/module.mjs). `WBO_HOSTED_MODE`
+switches the root page to the Hosted shell while preserving legacy WBO mode;
+`/source` renders the version-pinned Corresponding Source disclosure and
+returns an explicit unavailable response when deployment mapping is missing.
+Boot passes this runtime to both the HTTP handler and Socket.IO startup so
+future Hosted Event behavior has one composition seam.
+`WBO_DEPLOYMENT_VERSION`, `WBO_CORRESPONDING_SOURCE_URL` (a URL template with a
+`{version}` placeholder), and `WBO_CORRESPONDING_SOURCE_BUILD` are startup-only
+source disclosure inputs; they are intentionally not inferred from a mutable
+branch or the local working tree.
+
+Hosted durability is selected once in
+[storage/index.mjs](./server/hosted_event/storage/index.mjs). Production uses
+`WBO_HOSTED_STATE_STORE=postgres`: mutable stores keep synchronous in-memory
+indexes loaded before listen and transactionally replace versioned JSONB
+documents through [storage/postgres.mjs](./server/hosted_event/storage/postgres.mjs),
+which also holds an advisory lock enforcing one active instance. Production
+uses `WBO_HOSTED_OBJECT_STORE=s3` with the private, S3-compatible adapter in
+[archive/s3_store.mjs](./server/hosted_event/archive/s3_store.mjs); Cloudflare
+R2 configuration is deployment-owned. File adapters remain the local/test
+fallback. See `docs/operations/deployment.md` for the exact configuration and
+the `npm run check:hosted-storage` startup preflight.
+
+In hosted mode, accounts live under
+[hosted_event/accounts/](./server/hosted_event/accounts/): `store.mjs` owns the
+durable account/session/verification-token/password-reset-token state
+(verification tokens, reset tokens, and session ids are persisted only as
+SHA-256 digests; sessions additionally carry a stable 10-hex public id that
+the account page uses to list and revoke sessions), `passwords.mjs` owns scrypt
+hashing, `emails.mjs` owns normalization and validation, `routes.mjs` owns the
+`/register`, `/verify`, `/login`, `/logout`, `/forgot`, `/reset`, and
+`/account` flows, and `captcha.mjs` exposes the configurable CAPTCHA contract
+backed by the shared `TURNSTILE_*` configuration. Password resets and password
+changes revoke sessions (resets revoke all of the account's sessions, changes
+keep the current device's); account disabling and explicit global revocation
+invalidate every session. CSRF tokens rotate on login and logout, so tokens
+rendered before a session transition are deterministically rejected. Shared
+Hosted document chrome lives in
+[hosted-layout.html](./client-data/partials/hosted-layout.html); route-owned
+page templates provide its local Handlebars partial block. Hosted page
+templates and partials are never served statically, and legacy mode 404s all
+account routes. Verification and recovery mail is
+composed in the request's language and queued through the notification
+service's durable queue (see below), so a mail vendor outage becomes an
+observable retry instead of a failed request. Delivery goes through the
+adapter `WBO_HOSTED_MAIL_TRANSPORT` selects
+([mail.mjs](./server/hosted_event/accounts/mail.mjs)): `smtp`
+([smtp_mail.mjs](./server/hosted_event/accounts/smtp_mail.mjs)) submits to a
+real vendor over implicit TLS with deployment-supplied credentials and fails
+closed when incompletely configured, and the default `outbox` writes JSON
+files in `WBO_HOSTED_MAIL_OUTBOX_DIR` (default
+`<WBO_HOSTED_DATA_DIR>/mail-outbox`) for an external sender to drain. Account
+responses, logs, and emails must never carry passwords, password hashes, or
+verification tokens; hosted pages are session-aware and therefore `no-store`
+with `Referrer-Policy: no-referrer`. Hosted account limits and timeouts are
+configured with `WBO_HOSTED_SESSION_MAX_AGE_MS`,
+`WBO_HOSTED_SESSION_IDLE_TIMEOUT_MS`, `WBO_HOSTED_VERIFICATION_TOKEN_TTL_MS`,
+`WBO_HOSTED_PASSWORD_RESET_TTL_MS`, and the `WBO_HOSTED_REGISTER_ATTEMPTS_*` /
+`WBO_HOSTED_LOGIN_ATTEMPTS_*` / `WBO_HOSTED_FORGOT_ATTEMPTS_*` pairs. The
+`HOSTED_CLOCK` config field is an injectable clock adapter for isolated tests
+(never read from the environment); integration tests drive expiry and
+revocation through it instead of sleeping.
+
+Event lifecycle mail lives under
+[hosted_event/notifications/](./server/hosted_event/notifications/):
+[service.mjs](./server/hosted_event/notifications/service.mjs) is the single
+fan-out seam — reservation approval/rejection and Change Request decisions
+notify organizer members ([notices.mjs](./server/hosted_event/notifications/notices.mjs)
+composes every lifecycle notice bilingually, `zh-CN` first then `en`, with no
+links), event cancellation and Board Session close also reach every Event
+Membership holder, the archive close pipeline reports archive success and
+first-failure episodes, and the lifecycle pass sends one upcoming-start
+heads-up per scheduled session inside
+`WBO_HOSTED_NOTICE_UPCOMING_WINDOW_MS` (organizers only). Every notice is
+enqueued with a stable idempotency key (`<logical trigger>:<audience>:<accountId>`)
+into the durable store
+([store.mjs](./server/hosted_event/notifications/store.mjs), one
+`notifications.json` per data directory), so retries, repeated passes, and
+restarts never re-send a delivered notice; sent records shrink to
+content-free tombstones. Delivery drains through the shared mail adapter on
+detached, coalescing passes (kicked per enqueue and on the lifecycle-poker
+cadence — never inside a request or the close pipeline); failed attempts back
+off from `WBO_HOSTED_MAIL_RETRY_MS` (doubled, capped at one hour) and stay
+listed with recipient and last error on the operator console's "Mail
+delivery retries" section until the vendor accepts them. Trigger methods and
+the drain never throw: a notice problem must not fail the state change,
+request, or close pass that reported it.
+
+In hosted mode, Event admission lives under
+[hosted_event/events/](./server/hosted_event/events/),
+[hosted_event/memberships/](./server/hosted_event/memberships/), and
+[hosted_event/admission/](./server/hosted_event/admission/): the event routes
+own the Public ID event page, Access Code admission
+(`/events/{publicId}/enter`), the one-way anonymity switch
+(`/events/{publicId}/anonymity`), and Owner/Admin Access Code mint/rotation
+plus Event Lock toggling under
+`/organizers/{organizerId}/events/{eventId}/access-code` and `/entry-lock`.
+The shared Access Code is high-entropy, normalized before comparison, and
+persisted only as a SHA-256 digest in the event record; its raw value is
+revealed exactly once to the managing Owner/Admin and never stored or
+re-rendered. Rotation blocks future admission with the old code and keeps
+every existing membership; the Event Lock refuses all new admission while
+memberships remain. [memberships/store.mjs](./server/hosted_event/memberships/store.mjs)
+owns the durable Event Membership records (an Event/Account pair plus the
+anonymity choice) and Event Bans, which survive refreshes, rotation, and
+locks; the anonymity choice is changeable only while the Board Session is
+scheduled or open and frozen afterwards. Admission failures render one
+uniform response — wrong code, locked, cancelled, and not-yet-open are
+indistinguishable — and attempts are rate limited per Account and per IP
+through `WBO_HOSTED_ACCESS_CODE_ATTEMPTS_*`. Public URLs carry only Event
+Public IDs and event board names, never internal event or Board Session
+identifiers. Hosted mode additionally wraps every pre-Event WBO entry surface
+(`/boards/*`, `/random`, raw SVG, preview, export, download) in `server.mjs`
+with a deterministic 404 and never redirects to a compatibility path.
+
+Organizer-backend integration lives under
+[hosted_event/integrations/](./server/hosted_event/integrations/): API
+Credential administration (create, rotate, revoke) is Owner-only on the
+organizer manage page under `/organizers/{organizerId}/credentials*`, and the
+versioned machine API is exactly `GET /api/v1/events/{publicId}` (lifecycle
+query) and `POST /api/v1/events/{publicId}/entry-grants`, both authenticated
+by an `Authorization: Bearer <credentialId>.<secret>` header. Only a SHA-256
+digest of the full bearer value is stored; the raw secret is revealed exactly
+once at creation or rotation, rotation invalidates the previous bearer value
+but not grants it already issued, and revocation invalidates both immediately.
+Every endpoint scopes through the credential's own organizer — another
+organizer's event is indistinguishable from a missing one — and grant
+creation is rate limited per credential (`WBO_HOSTED_API_ENTRY_GRANT_*`).
+Entry Grants are 10-minute, single-use tokens
+(`WBO_HOSTED_ENTRY_GRANT_TTL_MS`) that travel to the participant's browser
+only in the redirect URL's fragment; [hosted-entry-grant.js](./client-data/hosted-entry-grant.js)
+redeems them with one authenticated POST to `/events/{publicId}/entry-grant`
+(never in query, path, referrer, or ordinary access logs), clearing the
+fragment immediately and stashing a pending grant in sessionStorage until a
+signed-out participant completes Hosted Account login. Redemption is one
+uniform deterministic failure for expired, reused, revoked-credential,
+foreign-event, malformed, banned, locked, and not-yet-open cases — Event
+Ban, the Entry Lock, the Board Session lifecycle, and seat capacity all
+precede a valid grant — and attempts are rate limited per Account and per IP
+(`WBO_HOSTED_ENTRY_GRANT_ATTEMPTS_*`). The optional External Participant
+Reference is opaque, control-character-stripped, length-capped, and never
+influences admission or identity.
+
+Real-time access to an event's Board Session is owned by
+[hosted_event/admission/](./server/hosted_event/admission/): each event
+carries an unguessable board name (`event-<hex>`), and `/b/{boardName}` is the
+only hosted page that renders the real WBO board (delegating to the legacy
+board renderer with the role pinned on the context); `/b/{boardName}.svg`
+serves the same board's SVG baseline behind the same admission gate so the
+client's reconnect baseline refresh cannot strand a disconnected tab. The same
+admission module gates every Socket.IO handshake — legacy board names are
+refused, and role ("moderator" for Organizer Owner/Admin including the
+Preparation Window, "event_moderator" for a per-event Event Moderator grant
+with the same entry window and seat exemption but never the Clear capability,
+"editor" for a member holding the account's single writable connection,
+"reader" for its extra tabs) is pinned on the socket and consumed by
+[board_capabilities.mjs](./server/auth/board_capabilities.mjs) instead of
+JWTs. Event Moderator grants are created and revoked by Owner/Admin from the
+organizer event console (`/organizers/{organizerId}/events/{eventId}/moderators`);
+revocation refreshes the revoked account's live connections through the
+moderation socket-effects registry ([moderation/socket_effects.mjs](./server/hosted_event/moderation/socket_effects.mjs))
+— still-admissible sockets get their new role immediately, refused ones are
+dropped. Participant Seats count distinct Accounts per Event against the Board
+Session's approved capacity, survive a 10-minute reconnect grace
+(`WBO_HOSTED_SEAT_GRACE_MS`) after an account's last connection drops, and
+promote a companion tab to writer on writer loss; persistent writes are
+revalidated live (lifecycle, ban, writer slot) per message through
+`revalidateSocketWrite`. Hosted mode also blocks the Download tool through
+`BLOCKED_TOOLS`, and the board shell embeds its board identity
+(`board-identity` JSON, including the event page path on hosted boards) so the
+client boots correctly on non-`/boards/` URLs and can route terminal admission
+refusals back to the event page instead of looping reconnects.
+
+Hosted mode fail-closes at boot when `AUTH_SECRET_KEY` is empty: participant
+identifier derivation needs a stable deployment secret. Every accepted
+persistent write is operator-resolved server-side (hosted session → Account →
+Event Membership → Board Session → pinned role) and stamped with an opaque,
+event-scoped Participant Identifier ([attribution.mjs](./server/hosted_event/attribution.mjs))
+— never an email or Account id — which becomes the item's immutable
+`createdBy` (top-level canonical field, stored as `data-wbo-created-by` in
+SVG, round-tripped centrally through [stored_svg_item_codec.mjs](./server/persistence/stored_svg_item_codec.mjs)).
+Copies attribute to the copier while keeping their source relation; updates
+never change `createdBy`. Message normalization drops client-supplied
+attribution fields, so the browser can never forge an author.
+
+Event-scoped governance lives under
+[hosted_event/moderation/](./server/hosted_event/moderation/): a durable,
+append-only moderation log (`moderation_log.json`) records every report, warn,
+kick, Event Ban, unban, Entry Lock change, and Clear with the actual operator
+account, the target's event-scoped Participant Identifier and frozen display
+name, and a required reason (Clear collects one in hosted mode through the
+Clear tool; the wire schema allows an optional `reason` on CLEAR). The socket
+handlers in [hosted_moderation.mjs](./server/socket/hosted_moderation.mjs)
+own the real-time surface: hosted `report_user` messages never disconnect
+anyone — they are recorded and surfaced to governance roles via
+`user_reported` — while `moderation_action` (warn/kick/ban/unban, moderator
+only, reason required) applies dispositions, bans revoke the membership and
+evict every connection of the target through the socket-effects registry, and
+`moderation_state` serves moderators the event's ban list as Participant
+Identifiers with frozen names. Governance roles are protected targets:
+reports and dispositions against them are refused deterministically. Reports
+never carry emails or Account ids into the board; the Owner/Admin console
+renders the trail on the organizer event page with operator emails resolved.
 
 Every HTTP request passes through [dispatch.mjs](./server/http/dispatch.mjs),
 where URL validation, route matching, route-level access checks, request
@@ -168,7 +399,14 @@ Client `broadcast` messages enter
    [data.mjs](./server/board/data.mjs) through
    [message_processing.mjs](./server/board/message_processing.mjs), record it in
    [mutation_log.mjs](./server/board/mutation_log.mjs), and emit sequenced
-   `broadcast` frames to synced clients and the sender.
+   `broadcast` frames to synced clients and the sender. In hosted mode the
+   session also resolves the server-authoritative operator, stamps the
+   operator's `createdBy` onto item-creating mutations, deduplicates accepted
+   `clientMutationId`s (retries re-confirm the original entry), and durably
+   appends the entry to the board's mutation ledger before the sender is
+   confirmed; a failed ledger append rejects the write (`ledger_unavailable`)
+   and drops the mutated board instance so it reloads from snapshot plus
+   ledger. Legacy mode skips all of this and keeps in-memory-only logging.
 
 [presence.mjs](./server/socket/presence.mjs) tracks connected board users,
 [reports.mjs](./server/socket/reports.mjs) handles user reports,
@@ -195,7 +433,17 @@ tracks the SVG extent. Mutation application stays in
 [data_persistence.mjs](./server/board/data_persistence.mjs) owns autosave
 scheduling, load, save, unload, and stale-save handling.
 
-On disk, stored SVG is authoritative. [svg_board_store.mjs](./server/persistence/svg_board_store.mjs)
+On disk, stored SVG is authoritative, and in hosted mode the durable
+mutation ledger is the authoritative post-snapshot history: board loads
+hydrate ledger entries newer than the snapshot sequence
+(`board.ledger_hydrated`), the ledger stays append-only for the Board
+Session's lifetime (retention is later work building on it), and ledger
+corruption or a replay gap fails the load instead of silently diverging.
+An unreadable stored SVG is quarantined with `svg.snapshot_unreadable_quarantined`
+and recovery continues from the backup or the ledger rebuild. The file ledger
+fallback additionally drops a torn final JSONL line and repairs the append
+boundary before the next append.
+[svg_board_store.mjs](./server/persistence/svg_board_store.mjs)
 reads served baselines, loads canonical board state, writes fresh SVGs, and
 rewrites existing SVGs. It relies on
 [streaming_stored_svg_scan.mjs](./server/persistence/streaming_stored_svg_scan.mjs)
@@ -209,6 +457,196 @@ for legacy JSON conversion. Persistence paths and timing are configured through
 `WBO_SEQ_REPLAY_RETENTION_MS`. Board moderators are configured with
 `WBO_BOARD_MODERATORS` as space-separated `board:secret[,secret]` groups.
 
+The durable mutation ledger reaches its selected adapter through the factory
+seam in [ledger_registry.mjs](./server/board/ledger_registry.mjs). Production
+stores ordered rows in PostgreSQL `wbo_board_mutation_ledger`; the file
+fallback in [hosted_event/ledger/](./server/hosted_event/ledger/) stores one
+JSONL file per board. Every entry carries `seq`, `acceptedAtMs`, `eventId`,
+`boardSessionId`, the internal `accountId`, and the full attributed mutation.
+
+Board Session closing is owned by the close pipeline in
+[hosted_event/archive/close.mjs](./server/hosted_event/archive/close.mjs),
+run after every lifecycle advancement (request-driven and through the
+lifecycle poker). Once a session's drain window elapses the pipeline drains
+already-admitted writes through the board session queue, levels the stored SVG
+snapshot with the mutation ledger on one final authoritative sequence, and
+only on agreement produces the immutable Private Board Archive — canvas with
+item attribution, the accepted-mutation ledger as audit boundary, and a
+manifest with integrity hashes — before sealing the session `closed`
+(`markBoardSessionClosed`). Validation or storage failure moves the session
+to a durable `archive_failed` state (`recordBoardSessionArchiveFailed`) that
+keeps the classified failure code, the internal detail, and the attempt
+history on the session record plus a Change Audit entry and an archive
+metric; an `archive_failed` session admits no writes and never displays an
+archived result. Recovery is idempotent end to end: automatic retries
+re-attempt `archive_failed` sessions after
+`WBO_HOSTED_BOARD_SESSION_ARCHIVE_RETRY_MS` (the deterministic manifest and
+the immutable archive store make re-puts no-ops, and the guarded seal never
+double-advances), while Platform Operators can retry immediately from the
+operator console (`retryBoardSessionArchive`, POST
+`/operator/board-sessions/{boardSessionId}/archive-retry`), which lists
+failed work with its failure context. A close is never faked: the read-only
+completion notification is sent only when the session actually sealed.
+Archive objects use the selected immutable store: private R2 keys in production
+through [archive/s3_store.mjs](./server/hosted_event/archive/s3_store.mjs), or
+`<WBO_HOSTED_DATA_DIR>/board-archives/` through
+[archive/store.mjs](./server/hosted_event/archive/store.mjs) in file mode. Keys
+are internal and never public access credentials. A sealed session cannot be
+re-edited or reopened; its connected sockets end on a read-only completion
+state (`BOARDSTATE` carrying `eventClosed: true`, demoted to reader) and
+reconnects are refused by admission. Empty Board Sessions archive the same
+way. Archive success and first-failure episodes enqueue organizer notices
+through the notification service, which also tells the event's members the
+event has closed.
+
+Published Canvas publication lives under
+[hosted_event/publication/](./server/hosted_event/publication/): Owner/Admin
+publish flows (`POST
+/organizers/{organizerId}/events/{eventId}/publication` and
+`.../publication/revoke` in
+[events/routes.mjs](./server/hosted_event/events/routes.mjs)) always derive a
+sanitized, read-only presentation from the sealed Private Board Archive —
+never the authoritative canvas — via
+[publication/canvas.mjs](./server/hosted_event/publication/canvas.mjs), which
+strips every `data-wbo-created-by` attribute that the Publication Policy does
+not allow to show (an item keeps its Participant Identifier only when the
+organizer enabled public attribution and its creator's frozen Presentation
+Choice is "identified"; anonymous, banned, and unknown creators fail safe to
+no identifier). The derived artifact is stored immutably under
+`published-canvases/` in the archive store by
+[publication/store.mjs](./server/hosted_event/publication/store.mjs), keyed by
+a per-board-session monotonic generation; unchanged policy content reuses the
+current generation's object. Publication Audience (`organizer`, `members`,
+`link`) is re-checked on every read of `GET /events/{publicId}/canvas` and
+`GET /events/{publicId}/canvas/{token}` — revocation invalidates all
+audiences and the (digest-stored, revealed-once, rotated on every
+link-audience publish) share token immediately, and every refusal renders one
+uniform 404. The published page is `no-store` with `X-Robots-Tag` and meta
+`robots` noindex.
+
+Asynchronous Board Image Export lives under
+[hosted_event/export/](./server/hosted_event/export/): Owner/Admin request a
+PNG projection of a successfully archived Board Session from the organizer
+event console (POST
+`/organizers/{organizerId}/events/{eventId}/exports`); the pipeline reads the
+sealed archive only (manifest integrity hash verified, never a live Board
+Session, no raw SVG exposure), re-wraps the drawing area in a sanitized SVG
+without `data-wbo-*` attribution, and rasterizes it with `@resvg/resvg-js`
+into an ordinary PNG — white background, content bounds plus margin, longest
+edge capped at 8192 px — whose chunks are checked against a strict allowlist
+so attribution, Participant Identifiers, audit data, or object keys can never
+appear in the output. Oversized or unrenderable content fails deterministically
+(`archive_unavailable`, `archive_invalid`, `render_failed`,
+`output_limit_exceeded`, `output_metadata_rejected`, `storage_write_failed`).
+Job records live in the selected state store and successful PNG bytes under
+`image-exports/` in the selected object store via
+[export/store.mjs](./server/hosted_event/export/store.mjs); jobs survive
+restarts (`processing` jobs are re-queued), retry failed renders up to three
+attempts paced by `WBO_HOSTED_BOARD_EXPORT_RETRY_MS`, and then stay settled —
+repeated passes never re-run succeeded work. Export passes are kicked on the
+lifecycle-poker cadence but detached: rendering can take seconds, so no
+request path ever blocks on it. The download route
+(`GET /organizers/{organizerId}/events/{eventId}/exports/{exportId}/download`)
+requires an authorized Owner/Admin session plus an HMAC-derived token; links
+are valid for `WBO_HOSTED_BOARD_EXPORT_LINK_TTL_MS` (24 h) and die immediately
+on revoke or delete.
+
+Outcome retention, early deletion, and expiry purge live under
+[hosted_event/outcomes.mjs](./server/hosted_event/outcomes.mjs): a sealed
+Board Session's Private Board Archive, the Item Attribution inside its canvas,
+its Change Audit (the durable mutation ledger), the event's Published
+Canvas, and its Board Image Export objects are retained for
+`WBO_HOSTED_OUTCOME_RETENTION_MS` (90 days from the archive seal, `0`
+disables expiry purges) and then purged together by one idempotent,
+event-isolated pass on the lifecycle-poker cadence. An Owner/Admin can request
+early deletion from the event console (POST
+`/organizers/{organizerId}/events/{eventId}/outcomes/delete`); the request
+enters the `WBO_HOSTED_OUTCOME_DELETE_WINDOW_MS` recoverable window (7 days)
+and immediately invalidates the Published Canvas and every export download
+link by consulting the durable deletion record on every read — nothing is
+deleted yet — while POST `.../outcomes/restore` inside the window removes the
+request and every surface is consistent again by construction. The purge
+deletes outcome objects first and stamps durable markers last
+(`outcomesPurgedAtMs` per session, `purgedAtMs` on the event's deletion
+record), so an interrupted purge replays as a no-op; failures record a
+durable context on the event, stay visible on the organizer event console and
+the operator console, retry after `WBO_HOSTED_OUTCOME_PURGE_RETRY_MS`, and can
+be retried immediately by a Platform Operator (POST
+`/operator/events/{eventId}/outcome-purge-retry`). Moderation-log and
+organizer Change Audit records are governance/accountability data and are not
+part of the outcome purge. The Owner/Admin audit view
+(`GET /organizers/{organizerId}/events/{eventId}/audit`) renders the
+retention deadline from the service clock, the Board Item Attribution counted
+from the archived canvas, the recent accepted board mutations from the ledger
+with internal Account ids projected to Participant Identifiers, and the
+event-scoped administrative activity; Event Moderators and Participants have
+no console access at all.
+
+Signed Webhooks live under
+[hosted_event/webhooks/](./server/hosted_event/webhooks/): an Organizer Owner
+creates, rotates, revokes, and resumes Webhook Subscriptions from the
+organizer console (`POST /organizers/{organizerId}/webhooks`,
+`.../webhooks/{subscriptionId}/rotate|revoke|resume`) — non-Owners never see
+or replace the HMAC secret, which is revealed exactly once and stored raw
+only because the platform itself signs with it. Endpoints must be HTTPS
+(HTTP only where the composition allows development), credential-free, and
+hosted; invalid URLs are refused at creation. The durable outbox derives
+`event.opened`, `event.closed`, `archive.ready`, and `archive.failed`
+idempotently from the durable Board Session state (dedupe keys per session
+and failure episode, so restarts and repeated passes enqueue nothing new),
+captures the subscriptions active at derivation time, and delivers each
+payload — Event Public ID, event name, timestamps, and a deterministic
+failure code for `archive.failed`, nothing else — at least once per
+subscription with `X-SukimaCanvas-Signature: t=<unix-seconds>,v1=<hmac-sha256
+over "<t>.<body>">` plus stable event id, event type, and delivery id
+headers. Non-2xx responses, network errors, and timeouts retry with capped
+exponential backoff (`WBO_HOSTED_WEBHOOK_RETRY_MS`) for
+`WBO_HOSTED_WEBHOOK_GIVE_UP_MS` (24 h) per record, measured from its first
+failed attempt; after that the subscription is suspended — its queued
+records freeze, never drop — the Organizer Owners are notified through the
+durable notice queue, and an Owner resumes from the console to deliver them.
+Resuming starts a fresh give-up window for every frozen record, so a fixed
+endpoint can always recover. Fully delivered outbox entries shrink to
+idempotency tombstones after 30 days; their dedupe keys survive, so a
+delivered event can never re-enqueue. Delivery runs detached on the lifecycle-poker
+cadence, discards response bodies unread, treats every failure as data, and
+never logs secrets, signatures, or endpoint URLs. Revocation drops a
+subscription's pending records with the Owner's explicit opt-out.
+
+Historical Archive import lives under
+[hosted_event/history/](./server/hosted_event/history/): a Platform Operator
+imports one explicitly selected legacy WBO SVG for one explicitly selected
+Organizer from the operator console (`GET/POST
+/operator/historical-imports`). The strict parser in
+[legacy_svg_import.mjs](./server/hosted_event/history/legacy_svg_import.mjs)
+accepts only the stored-SVG item vocabulary under `drawingArea` and
+re-serializes every item canonically through the tools' stored-item
+contracts, so unsupported structure is deterministically rejected, hostile
+attributes and markup cannot survive, and every `data-wbo-created-by` claim
+is stripped — a Historical Archive is private, read-only, authorship
+`unknown`, and has no Change Audit, ledger object, or Participant/operator
+fabrication. Imports are idempotent by construction: the import id derives
+from the target Organizer plus the source digest, a crashed import is
+completed (never duplicated) by re-importing, and a completed import refuses
+the same source deterministically; every attempt, outcome, and failure reason
+is recorded in the Historical Archive state document and audited only on the
+operator console. There is no history-directory scan, no batch migration, no
+Event/Reservation creation, and no path that reopens a Historical Archive as
+a Board Session; retention never enumerates the `historical-archives/` key
+namespace.
+
+Account deregistration is owned by
+[hosted_event/accounts/store.mjs](./server/hosted_event/accounts/store.mjs):
+`deleteAccount` irreversibly pseudonymizes the account (the email is replaced
+by a random `deleted-<hex>@sukimacanvas.invalid` placeholder that no one can
+map back, the password hash is dropped, status becomes the terminal
+`deleted`), revokes every session, and consumes outstanding verification and
+reset tokens. The internal Account id is kept on purpose so the mutation
+ledger, moderation log, and organizer Change Audit stay accountable; public
+attribution was already an opaque event-scoped Participant Identifier and is
+unchanged. The flow runs through POST `/account/delete` (password re-proof +
+CSRF) and lands on `/login?deleted=1`.
+
 ### tests, benchmarks, and profiling
 
 Use [test-node](./test-node) for Node tests and
@@ -216,9 +654,11 @@ Use [test-node](./test-node) for Node tests and
 [playwright.config.ts](./playwright.config.ts) for browser integration tests.
 Server benchmarks are in [benchmark-server.mjs](./scripts/benchmark-server.mjs),
 profiling starts from
-[profile-benchmark-server.mjs](./scripts/profile-benchmark-server.mjs), and the
+[profile-benchmark-server.mjs](./scripts/profile-benchmark-server.mjs), the
 peer-visible erase benchmark is
-[benchmark-peer-visible-erase.mjs](./scripts/benchmark-peer-visible-erase.mjs).
+[benchmark-peer-visible-erase.mjs](./scripts/benchmark-peer-visible-erase.mjs),
+and the archive-close and image-export scenarios are
+[benchmark-hosted-outcomes.mjs](./scripts/benchmark-hosted-outcomes.mjs).
 
 ## wire socket protocol
 
@@ -247,20 +687,38 @@ includes `accessRefreshAfterMs`, the server-derived delay until the last active
 secret/IP ban expires. The browser schedules one reconnect at that boundary so
 `canEdit` and `canReport` refresh without polling. The server also ignores a
 non-moderator report targeting the reporter's own socket or another socket with
-the same non-empty, secret-derived user identity.
+the same non-empty, secret-derived user identity. On hosted event boards the
+`report_user` flow is event governance: self-reports, malformed socket ids, and
+targets on other events are rejected deterministically, reports are recorded in
+the moderation log and surfaced to governance roles via `user_reported`, and no
+one is disconnected by a report alone.
+
+Hosted Event moderators apply dispositions on the `moderation_action` event:
+`{ "action": "warn" | "kick" | "ban" | "unban", "reason": "<required>", "socketId"?: "<online target>", "participantId"?: "<banned participant identifier>" }`.
+Warn delivers `moderation_notice { "reason" }` to the target while it stays
+connected; kick and ban evict every connection of the target account on the
+event; ban revokes the membership and creates the durable Event Ban that
+overrides Access Codes, memberships, and future Entry Grants; unban matches by
+Participant Identifier against the event's current bans. A missing reason,
+unknown action, protected governance target, or unresolvable identifier is
+rejected deterministically (the optional ack reports `{ ok: false, reason }`).
+Moderators fetch the ban list for the unban flow via a `moderation_state` ack
+carrying `{ "banned": [{ "participantId", "name" }] }`.
 
 Board state and presence expose `canBan` separately from `canClear`. Moderation
 UI and moderator markers use `canBan`; Clear-tool access, large-batch admission,
-and destructive rate-limit bypasses use `canClear`.
+and destructive rate-limit bypasses use `canClear`. Hosted Event Moderators hold
+`canBan` but never `canClear`.
 
 Before the reported socket is closed, the server emits
-`moderation_disconnect { "banDurationMs": <duration>, "source": "moderator" | "peer_report", "moderationRule"?: "<rule>" }`.
+`moderation_disconnect { "banDurationMs": <duration>, "source": "moderator" | "peer_report" | "event_ban", "moderationRule"?: "<rule>" }`.
 Moderator actions use `source: "moderator"`; `0` means a warning and a positive
 duration means a ban. Non-moderator reports disconnect the reporter and
 reported user after logging the report, emit a zero-duration notice with
-`source: "peer_report"` only to the reported target, and do not ban. The client
-treats a missing, unknown, or incoherent source as moderator-originated for
-backward-compatible, fail-safe wording. For accepted non-moderator reports, the
+`source: "peer_report"` only to the reported target, and do not ban. Hosted
+event bans use `source: "event_ban"`. The client treats a missing, unknown, or
+incoherent source as moderator-originated for backward-compatible, fail-safe
+wording. For accepted non-moderator reports, the
 server emits `user_reported` only to connected moderators on that board. The
 `user_reported` payload is
 `{ "reporterName": "<display name>", "reportedName": "<display name>" }`.
@@ -432,11 +890,21 @@ Important files:
 - Persistent socket writes flow through policy, rate limits, the per-board
   session, board mutation application, mutation-log recording, and sequenced
   broadcasts. Cursor messages are ephemeral and are not persisted or replayed.
+- Hosted item attribution is server-authoritative end to end: the operator is
+  resolved from the hosted session and admission verdict, `createdBy` is
+  stamped at acceptance from an opaque participant identifier, and updates,
+  copies, and replayed ledger entries can never rewrite an item's creator.
+- In hosted mode an accepted persistent write is durable before it is
+  confirmed: the ledger append (fsync) gates the sequenced broadcast, a
+  ledger failure rejects the write and drops the mutated board instance, and
+  loads replay ledger entries past the stored SVG snapshot. Ledger history is
+  never silently skipped; corruption fails the load loudly.
 - Connection replay starts from the SVG baseline sequence attached to the page.
   Reconnects refresh the authoritative SVG baseline before opening a new socket
   when replay is not possible.
-- Canonical board items store scalar fields in `attrs`, `transform` once at the
-  item top level, and payload-specific state under `payload`.
+- Canonical board items store scalar fields in `attrs`, `transform` once at
+  the item top level, server-stamped `createdBy` as the only other top-level
+  scalar, and payload-specific state under `payload`.
 - Stored SVG is authoritative. `.svg.bak` is a transient save staging file, and
   unreadable primary SVGs are quarantined before fallback. Legacy `.json`
   boards are migration inputs, not the steady-state format.
@@ -445,7 +913,7 @@ Important files:
   error. Do not turn structural failures into silent repairs.
 - Board pages stream stored SVG baselines through the HTML shell. The board chrome
   and boot payloads must remain before the streamed board markup.
-- All user-visible strings MUST be localized via `Tools.i18n`. All [translation keys](server/http/translations.json) MUST have a carefully designed, natural sounding, context-aware version in ALL supported languages.
+- All user-visible strings MUST be localized via `Tools.i18n`. All [translation keys](server/http/translations.json) MUST have a carefully designed, natural sounding, context-aware version in `en`, `zh-CN`, and `ja`; Hosted Event pages additionally render only `en` and `zh-CN` (see `HOSTED_LANGUAGES`). Legacy board keys must keep their existing coverage in the other supported languages; do not drop existing translations.
 - The shared moderation rule list lives in [client-data/js/moderation_rules.js](./client-data/js/moderation_rules.js). It defines rule identity, icon files, translation key references, and the moderation-appeal URL. Rule SVG icons live in [client-data/rules/](./client-data/rules/). The `/rules` page, the moderation-action dialog, and the banned disconnect notice all read metadata from this single source.
 
 ## hot paths
@@ -468,8 +936,11 @@ When touching hot paths:
 - Use `withExpensiveActiveSpan` or a span around a batch for high-volume work.
   Do not start `withActiveSpan` per item.
 - Run `npm run bench` before and after suspected hot-path changes. Use
-  `npm run bench -- <e2e|load|persist|broadcast>` or the matching shortcut when
-  one scenario is enough.
+  `npm run bench -- <e2e|load|persist|broadcast|archive|export>` or the matching
+  shortcut when one scenario is enough.
+- The `export` scenario renders a 512-item archive by default because the raster
+  dominates it. Raise `WBO_BENCH_EXPORT_ITEMS` (with `WBO_BENCH_TIMEOUT_MS`) to
+  measure a larger board.
 
 ## frontend rules
 
@@ -518,8 +989,9 @@ When touching hot paths:
 - Format: `npm run format`.
 - Full local gate: `npm test`.
 - Benchmarks: `npm run bench`, `npm run bench:load`, `npm run bench:persist`,
-  `npm run bench:broadcast`, `npm run bench:e2e`.
-- Profiling: `npm run profile -- <e2e|load|persist|broadcast>`.
+  `npm run bench:broadcast`, `npm run bench:e2e`, `npm run bench:archive`,
+  `npm run bench:export`.
+- Profiling: `npm run profile -- <e2e|load|persist|broadcast|archive|export>`.
 
 `npm test` needs Chromium and local browser/network capability. If Chromium is
 missing, run `npx playwright install chromium`.

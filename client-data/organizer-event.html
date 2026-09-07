@@ -1,0 +1,304 @@
+{{#> hosted-layout
+  pageTitle=hostedEventName
+  workspaceNavigation=true
+}}
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-event-manage-title">
+        <h1 id="hosted-event-manage-title">{{hostedTranslations.hosted_event_manage_title}}</h1>
+        <p class="hosted-account-note">{{hostedEventName}} · {{hostedEventStatusLabel}}</p>
+        <p class="hosted-account-alt">
+          <a href="organizers/{{hostedOrganizerId}}/reservations/{{hostedEventReservationId}}">{{hostedTranslations.hosted_event_manage_back}}</a>
+          ·
+          <a href="{{hostedEventPublicHref}}">{{hostedTranslations.hosted_event_view_public}}</a>
+          ·
+          <a href="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/audit">{{hostedTranslations.hosted_outcome_audit_link}}</a>
+        </p>
+
+        {{#if hostedEventManageError}}
+        <p class="hosted-form-error" role="alert">{{hostedEventManageError}}</p>
+        {{/if}}
+        {{#if hostedEventManageNotice}}
+        <p class="hosted-form-success" role="status">{{hostedEventManageNotice}}</p>
+        {{/if}}
+
+        <p class="hosted-account-note">
+          {{hostedTranslations.hosted_event_public_link}}: <code>{{hostedEventPublicPath}}</code>
+        </p>
+
+        <dl class="hosted-operator-detail">
+          <dt>{{hostedTranslations.hosted_event_starts_label}}</dt>
+          <dd>{{hostedEventStartsAt}}</dd>
+          <dt>{{hostedTranslations.hosted_event_ends_label}}</dt>
+          <dd>{{hostedEventEndsAt}}</dd>
+        </dl>
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_event_display_title}}</h2>
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}" novalidate>
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-event-visibility">{{hostedTranslations.hosted_reservation_visibility_label}}</label>
+            <select id="hosted-event-visibility" name="visibility">
+              <option value="unlisted" {{#unless hostedEventVisibilityPublic}}selected{{/unless}}>{{hostedTranslations.hosted_reservation_visibility_unlisted}}</option>
+              <option value="public" {{#if hostedEventVisibilityPublic}}selected{{/if}}>{{hostedTranslations.hosted_reservation_visibility_public}}</option>
+            </select>
+          </div>
+          <div class="hosted-form-field">
+            <label for="hosted-event-tagline">{{hostedTranslations.hosted_event_tagline_label}}</label>
+            <textarea
+              id="hosted-event-tagline"
+              name="tagline"
+              rows="3"
+              maxlength="{{hostedEventTaglineMax}}"
+            >{{hostedEventTaglineValue}}</textarea>
+            <p class="hosted-form-hint">{{hostedTranslations.hosted_event_tagline_hint}}</p>
+          </div>
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_event_save}}</button>
+        </form>
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_event_admission_title}}</h2>
+        {{#if hostedEventAccessCodeReveal}}
+        <p class="hosted-form-success" role="status">
+          {{hostedTranslations.hosted_event_access_code_reveal}}
+          <code class="hosted-event-access-code-value">{{hostedEventAccessCodeReveal}}</code>
+        </p>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_event_access_code_reveal_hint}}</p>
+        {{/if}}
+        <p class="hosted-account-note">
+          {{#if hostedEventHasAccessCode}}
+          {{hostedTranslations.hosted_event_access_code_set_note}} {{hostedEventAccessCodeSetAt}}
+          {{else}}
+          {{hostedTranslations.hosted_event_access_code_missing_note}}
+          {{/if}}
+        </p>
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/access-code" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_event_access_code_rotate}}</button>
+        </form>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_event_access_code_rotate_hint}}</p>
+
+        <p class="hosted-account-note">
+          {{#if hostedEventEntryLocked}}
+          {{hostedTranslations.hosted_event_entry_locked_note}}
+          {{else}}
+          {{hostedTranslations.hosted_event_entry_open_note}}
+          {{/if}}
+        </p>
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/entry-lock" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <input type="hidden" name="locked" value="{{#if hostedEventEntryLocked}}0{{else}}1{{/if}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-event-entry-lock-reason">{{hostedTranslations.hosted_event_lock_reason_label}}</label>
+            <input type="text" id="hosted-event-entry-lock-reason" name="reason" maxlength="500" />
+          </div>
+          <button type="submit" class="hosted-submit {{#if hostedEventEntryLocked}}hosted-submit-danger{{/if}}">
+            {{#if hostedEventEntryLocked}}
+            {{hostedTranslations.hosted_event_entry_unlock}}
+            {{else}}
+            {{hostedTranslations.hosted_event_entry_lock}}
+            {{/if}}
+          </button>
+        </form>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_event_entry_lock_hint}}</p>
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_event_moderators_title}}</h2>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_event_moderators_hint}}</p>
+        {{#if hostedEventHasModerators}}
+        <ul class="hosted-moderator-list">
+          {{#hostedEventModerators}}
+          <li class="hosted-moderator-item">
+            <span class="hosted-moderator-email">{{email}}</span>
+            <span class="hosted-moderator-granted">{{hostedTranslations.hosted_event_moderator_granted_at}} {{grantedAt}}</span>
+            <form method="post" action="organizers/{{../hostedOrganizerId}}/events/{{../hostedEventId}}/moderators/{{accountId}}/revoke" class="hosted-reservation-action">
+              <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+              <button type="submit" class="hosted-submit hosted-submit-danger">{{hostedTranslations.hosted_event_moderator_revoke}}</button>
+            </form>
+          </li>
+          {{/hostedEventModerators}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_event_moderators_empty}}</p>
+        {{/if}}
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/moderators">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-event-moderator-email">{{hostedTranslations.hosted_event_moderator_email_label}}</label>
+            <input type="email" id="hosted-event-moderator-email" name="email" required />
+            <p class="hosted-form-hint">{{hostedTranslations.hosted_event_moderator_email_hint}}</p>
+          </div>
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_event_moderator_grant}}</button>
+        </form>
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_event_moderation_log_title}}</h2>
+        {{#if hostedEventHasModerationRecords}}
+        <ul class="hosted-moderation-log">
+          {{#hostedEventModerationRecords}}
+          <li class="hosted-moderation-record">
+            <span class="hosted-moderation-record-time">{{createdAt}}</span>
+            <span class="hosted-moderation-record-action">{{actionLabel}}</span>
+            <span class="hosted-moderation-record-operator">{{operatorEmail}}</span>
+            {{#if targetName}}<span class="hosted-moderation-record-target">{{targetName}}<code>({{targetParticipantId}})</code></span>{{/if}}
+            {{#if reason}}<span class="hosted-moderation-record-reason">{{reason}}</span>{{/if}}
+          </li>
+          {{/hostedEventModerationRecords}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_event_moderation_log_empty}}</p>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_publication_title}}</h2>
+        {{#if hostedPublicationShareUrl}}
+        <p class="hosted-form-success" role="status">
+          {{hostedTranslations.hosted_publication_share_reveal}}
+          <code class="hosted-publication-share-url">{{hostedPublicationShareUrl}}</code>
+        </p>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_publication_share_hint}}</p>
+        {{/if}}
+        {{#if hostedPublicationCanPublish}}
+        <p class="hosted-account-note">
+          {{#if hostedPublicationPublished}}
+          {{hostedTranslations.hosted_publication_status_published}} — {{hostedPublicationAudienceLabel}}, {{hostedTranslations.hosted_publication_published_at}} {{hostedPublicationPublishedAt}}
+          {{else if hostedPublicationRevoked}}
+          {{hostedTranslations.hosted_publication_status_revoked}}
+          {{else}}
+          {{hostedTranslations.hosted_publication_status_none}}
+          {{/if}}
+        </p>
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/publication" novalidate>
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-publication-audience">{{hostedTranslations.hosted_publication_audience_label}}</label>
+            <select id="hosted-publication-audience" name="audience">
+              <option value="organizer" {{#if hostedPublicationAudienceOrganizer}}selected{{/if}}>{{hostedTranslations.hosted_publication_audience_organizer}}</option>
+              <option value="members" {{#if hostedPublicationAudienceMembers}}selected{{/if}}>{{hostedTranslations.hosted_publication_audience_members}}</option>
+              <option value="link" {{#if hostedPublicationAudienceLink}}selected{{/if}}>{{hostedTranslations.hosted_publication_audience_link}}</option>
+            </select>
+          </div>
+          <div class="hosted-form-field">
+            <input type="checkbox" id="hosted-publication-attribution" name="showAttribution" value="1" {{#if hostedPublicationAttribution}}checked{{/if}} />
+            <label for="hosted-publication-attribution">{{hostedTranslations.hosted_publication_attribution_label}}</label>
+            <p class="hosted-form-hint">{{hostedTranslations.hosted_publication_attribution_hint}}</p>
+          </div>
+          <button type="submit" class="hosted-submit">
+            {{#if hostedPublicationPublished}}
+            {{hostedTranslations.hosted_publication_update}}
+            {{else}}
+            {{hostedTranslations.hosted_publication_publish}}
+            {{/if}}
+          </button>
+        </form>
+        {{#if hostedPublicationViewHref}}
+        <p class="hosted-account-alt"><a href="{{hostedPublicationViewHref}}">{{hostedTranslations.hosted_publication_view_link}}</a></p>
+        {{/if}}
+        {{#if hostedPublicationPublished}}
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/publication/revoke" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <button type="submit" class="hosted-submit hosted-submit-danger">{{hostedTranslations.hosted_publication_revoke}}</button>
+        </form>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_publication_revoke_hint}}</p>
+        {{/if}}
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_publication_requires_archive_note}}</p>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_export_title}}</h2>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_export_hint}}</p>
+        {{#if hostedEventHasExportJobs}}
+        <ul class="hosted-export-list">
+          {{#hostedEventExportJobs}}
+          <li class="hosted-export-item">
+            <span class="hosted-export-status">{{statusLabel}}</span>
+            <span class="hosted-export-time">{{createdAt}}</span>
+            {{#if dimensions}}<span class="hosted-export-dimensions">{{dimensions}}</span>{{/if}}
+            {{#if failureLabel}}<span class="hosted-export-failure">{{failureLabel}}</span>{{/if}}
+            {{#if downloadHref}}
+            <span class="hosted-export-download">
+              <a href="{{downloadHref}}" download="{{filename}}">{{../hostedTranslations.hosted_export_download}}</a>
+              <span class="hosted-export-expires">{{../hostedTranslations.hosted_export_link_expires}} {{downloadExpiresAt}}</span>
+            </span>
+            {{else}}
+            {{#if dimensions}}<span class="hosted-export-expires">{{../hostedTranslations.hosted_export_link_unavailable}}</span>{{/if}}
+            {{/if}}
+            {{#if canRevoke}}
+            <form method="post" action="organizers/{{../hostedOrganizerId}}/events/{{../hostedEventId}}/exports/{{exportId}}/revoke" class="hosted-reservation-action">
+              <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+              <button type="submit" class="hosted-submit">{{../hostedTranslations.hosted_export_revoke}}</button>
+            </form>
+            {{/if}}
+            <form method="post" action="organizers/{{../hostedOrganizerId}}/events/{{../hostedEventId}}/exports/{{exportId}}/delete" class="hosted-reservation-action">
+              <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+              <button type="submit" class="hosted-submit hosted-submit-danger">{{../hostedTranslations.hosted_export_delete}}</button>
+            </form>
+          </li>
+          {{/hostedEventExportJobs}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_export_empty}}</p>
+        {{/if}}
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/exports" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_export_request}}</button>
+        </form>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_export_request_hint}}</p>
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_outcome_title}}</h2>
+        {{#if hostedOutcomeDeletionPending}}
+        <p class="hosted-form-error" role="status">
+          {{hostedTranslations.hosted_outcome_deletion_pending_note}} {{hostedOutcomePurgeAt}}
+        </p>
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/outcomes/restore" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_outcome_restore}}</button>
+        </form>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_outcome_restore_hint}}</p>
+        {{else if hostedOutcomePurged}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_outcome_purged_note}} {{hostedOutcomePurgedAt}}</p>
+        {{else if hostedOutcomeArchived}}
+        <p class="hosted-account-note">
+          {{hostedTranslations.hosted_outcome_retention_note}} {{hostedOutcomeRetentionUntil}}
+          {{#if hostedOutcomeRetentionDaysLeft}}({{hostedOutcomeRetentionDaysLeft}}){{/if}}
+        </p>
+        {{#if hostedOutcomeRetentionExpired}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_outcome_retention_expired_note}}</p>
+        {{/if}}
+        {{#if hostedOutcomeRetentionDisabled}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_outcome_retention_disabled_note}}</p>
+        {{/if}}
+        {{#if hostedOutcomePurgeFailed}}
+        <p class="hosted-form-error" role="alert">
+          {{hostedTranslations.hosted_outcome_purge_failed_note}} {{hostedOutcomePurgeFailureLabel}} ({{hostedOutcomePurgeFailureAttempts}})
+        </p>
+        {{/if}}
+        {{#if hostedOutcomeCanRequestDeletion}}
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/outcomes/delete" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <button type="submit" class="hosted-submit hosted-submit-danger">{{hostedTranslations.hosted_outcome_delete_request}}</button>
+        </form>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_outcome_delete_request_hint}}</p>
+        {{/if}}
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_outcome_requires_archive_note}}</p>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_event_cover_label}}</h2>
+        {{#if hostedEventHasCover}}
+        <img class="hosted-event-cover-preview" src="{{hostedEventCoverHref}}" alt="{{hostedTranslations.hosted_event_cover_alt}}" />
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <input type="hidden" name="visibility" value="{{#if hostedEventVisibilityPublic}}public{{else}}unlisted{{/if}}" />
+          <input type="hidden" name="tagline" value="{{hostedEventTaglineValue}}" />
+          <input type="hidden" name="removeCover" value="1" />
+          <button type="submit" class="hosted-submit hosted-submit-danger">{{hostedTranslations.hosted_event_cover_remove}}</button>
+        </form>
+        {{/if}}
+        <form method="post" action="organizers/{{hostedOrganizerId}}/events/{{hostedEventId}}/cover" enctype="multipart/form-data">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-event-cover">{{hostedTranslations.hosted_event_cover_label}}</label>
+            <input type="file" id="hosted-event-cover" name="cover" accept="image/png,image/jpeg,image/webp" required />
+            <p class="hosted-form-hint">{{hostedTranslations.hosted_event_cover_hint}}</p>
+          </div>
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_event_cover_upload}}</button>
+        </form>
+      </section>
+    </main>
+{{/hosted-layout}}

@@ -12,6 +12,7 @@ import {
   rebuildLiveItemCount,
 } from "./canonical_index.mjs";
 import { createMutationLog } from "./mutation_log.mjs";
+import { getBoardSession } from "./session.mjs";
 import { getMinPinnedReplayBaselineSeq } from "./registry.mjs";
 import { SerialTaskQueue } from "./serial_task_queue.mjs";
 import { createDefaultSvgExtent } from "./svg_extent.mjs";
@@ -276,6 +277,66 @@ function trimPersistedMutationLog(board, nowMs = Date.now()) {
   board.mutationLog.trimPersistedOlderThan(
     nowMs - retentionMs,
     pinnedBaselineSeq,
+  );
+}
+
+/**
+ * Catches a loaded board up to the authoritative sequence from the durable
+ * ledger. The stored SVG snapshot is a projection: any accepted mutation past
+ * its sequence is replayed from the ledger so snapshot lag never loses
+ * accepted writes, and item attribution comes from ledger entries rather than
+ * from anything a browser supplied. An unreadable snapshot falls back to an
+ * empty board, which the ledger then rebuilds from sequence zero.
+ *
+ * Load failures here propagate: replaying a ledger with a gap or a rejected
+ * mutation would silently diverge from the durable history, so the board
+ * refuses to load until the storage fault is addressed.
+ *
+ * @param {BoardData} board
+ * @returns {Promise<void>}
+ */
+async function hydrateBoardFromLedger(board) {
+  const ledger = board.mutationLedger;
+  if (!ledger) return;
+  const startedAt = Date.now();
+  const entries = await ledger.readEntriesAfter(board.getSeq());
+  if (entries.length === 0) return;
+  const session = getBoardSession(board);
+  for (const entry of entries) {
+    if (entry.seq !== board.getSeq() + 1) {
+      const error =
+        /** @type {Error & {code: string, expectedSeq: number, actualSeq: number}} */
+        (
+          new Error(
+            `Ledger seq gap while loading board: expected ${
+              board.getSeq() + 1
+            }, got ${entry.seq}`,
+          )
+        );
+      error.code = "WBO_LEDGER_SEQ_GAP";
+      error.expectedSeq = board.getSeq() + 1;
+      error.actualSeq = entry.seq;
+      throw error;
+    }
+    const result = board.processMessage(entry.mutation);
+    if (result.ok === false) {
+      throw new Error(
+        `Ledger replay failed for board at seq ${entry.seq}: ${result.reason}`,
+      );
+    }
+    board.recordPersistentMutation(
+      entry.mutation,
+      entry.acceptedAtMs,
+      entry.seq,
+    );
+    session.noteReplayedLedgerEntry(entry);
+  }
+  logger.info(
+    "board.ledger_hydrated",
+    boardLogFields(board, {
+      "wbo.board.ledger_entries": entries.length,
+      duration_ms: Date.now() - startedAt,
+    }),
   );
 }
 
@@ -719,6 +780,10 @@ async function loadBoardData(BoardDataClass, name, config) {
         boardData.trimPaintOrderIndex = 0;
         boardData.svgExtent = createDefaultSvgExtent();
       }
+      // Outside the guarded block: a ledger hydration failure must fail the
+      // load instead of silently serving a board that diverges from the
+      // durable accepted-mutation history.
+      await hydrateBoardFromLedger(boardData);
       return boardData;
     },
   );

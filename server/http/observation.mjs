@@ -204,6 +204,28 @@ function requestRouteTemplate(route) {
       return "/preview/{board}";
     case "random_board":
       return "/random";
+    case "source":
+      return "/source";
+    case "hosted_register":
+      return "/register";
+    case "hosted_login":
+      return "/login";
+    case "hosted_verify":
+      return "/verify";
+    case "hosted_logout":
+      return "/logout";
+    case "hosted_forgot":
+      return "/forgot";
+    case "hosted_reset":
+      return "/reset";
+    case "hosted_account":
+      return "/account";
+    case "hosted_account_password":
+      return "/account/password";
+    case "hosted_account_session_revoke":
+      return "/account/sessions/revoke";
+    case "hosted_account_sessions_revoke_others":
+      return "/account/sessions/revoke-others";
     case "index":
       return "/";
     default:

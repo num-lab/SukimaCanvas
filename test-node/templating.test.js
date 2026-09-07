@@ -68,7 +68,7 @@ test("Template.parameters falls back loosely by base language when region is uns
   const request = {
     url: "/boards/demo",
     headers: {
-      "accept-language": "fr-CA,fr;q=0.9,en;q=0.8",
+      "accept-language": "ja-JP,ja;q=0.9,en;q=0.8",
     },
     socket: { encrypted: false },
   };
@@ -82,5 +82,25 @@ test("Template.parameters falls back loosely by base language when region is uns
     {},
   );
 
-  assert.equal(parameters.language, "fr");
+  assert.equal(parameters.language, "ja");
+});
+
+test("Template renders local partial blocks without global registration", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "wbo-template-"));
+  const templatePath = path.join(directory, "template.hbs");
+  await fs.writeFile(
+    templatePath,
+    "{{#> layout pageTitle=title}}<p>{{message}}</p>{{/layout}}",
+    "utf8",
+  );
+  const template = new Template(templatePath, createConfig(), {
+    partials: {
+      layout: "<title>{{pageTitle}}</title>{{> @partial-block}}",
+    },
+  });
+
+  assert.equal(
+    template.render({ title: "Hosted page", message: "Hello" }),
+    "<title>Hosted page</title><p>Hello</p>",
+  );
 });

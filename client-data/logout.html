@@ -1,0 +1,21 @@
+{{#> hosted-layout
+  pageTitle=hostedTranslations.hosted_logout_title
+  canonical=true
+}}
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-logout-title">
+        <h1 id="hosted-logout-title">{{hostedTranslations.hosted_logout_title}}</h1>
+        {{#if hostedLogoutError}}
+        <p class="hosted-form-error" role="alert">{{hostedLogoutError}}</p>
+        {{/if}}
+        <p class="hosted-account-intro">{{hostedTranslations.hosted_logout_intro}}</p>
+        <form method="post" action="logout">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_logout_submit}}</button>
+        </form>
+        <p class="hosted-account-alt">
+          <a href=".">{{hostedTranslations.hosted_back_home}}</a>
+        </p>
+      </section>
+    </main>
+{{/hosted-layout}}

@@ -7,7 +7,7 @@ import MessageCommon from "./message_common.js";
 import { LIMITS } from "./message_limits.js";
 import { MutationType } from "./message_tool_metadata.js";
 import { MODERATION_RULES } from "./moderation_rules.js";
-import { SocketEvents } from "./socket_events.js";
+import { ModerationActions, SocketEvents } from "./socket_events.js";
 import { createToolIconBadge, updateToolIconBadge } from "./tool_icon_badge.js";
 
 /** @import { AppToolsState, AttachedBoardDomModule, BoardMessage, ConnectedUser, ConnectedUserMap, HandChildMessage } from "../../types/app-runtime" */
@@ -1040,6 +1040,176 @@ function showConnectedUserManagementDialog(Tools, presence, user) {
 }
 
 /**
+ * Requests the event's ban list from the server (moderators only).
+ *
+ * @param {{emit: (eventName: string, ...args: unknown[]) => void}} socket
+ * @returns {Promise<{participantId: string, name: string}[]>}
+ */
+function fetchHostedModerationState(socket) {
+  return new Promise((resolve) => {
+    socket.emit(
+      SocketEvents.MODERATION_STATE,
+      (/** @type {unknown} */ result) => {
+        const banned = /** @type {{banned?: unknown}} */ (
+          result !== null && typeof result === "object" ? result : {}
+        ).banned;
+        resolve(
+          Array.isArray(banned)
+            ? /** @type {{participantId?: unknown, name?: unknown}[]} */ (
+                banned
+              )
+                .map((entry) => ({
+                  participantId:
+                    typeof entry?.participantId === "string"
+                      ? entry.participantId
+                      : "",
+                  name: typeof entry?.name === "string" ? entry.name : "",
+                }))
+                .filter((entry) => entry.participantId !== "")
+            : [],
+        );
+      },
+    );
+  });
+}
+
+/**
+ * The hosted Event moderation dialog: warn, kick, or event-scoped ban for
+ * the selected participant, each requiring a reason, plus the event's ban
+ * list with unban actions. The participant is identified by the display
+ * name shown on the board and the opaque, event-scoped Participant
+ * Identifier — never an email or Account id.
+ *
+ * @param {AppToolsState} Tools
+ * @param {ConnectedUser} target
+ * @param {() => void} onSettled
+ * @returns {void}
+ */
+function showHostedModerationDialog(Tools, target, onSettled) {
+  const socket = Tools.connection.socket;
+  if (!socket) {
+    onSettled();
+    return;
+  }
+  /** @type {import("../../types/app-runtime").ModerationActionResultAck | null} */
+  let ackResult = null;
+  void fetchHostedModerationState(socket)
+    .then((banned) => {
+      /** @type {{id: string, label?: string, layout: "stacked" | "segmented" | "input", choices: {label: string, value: string | number, variant?: "secondary" | "warning" | "danger"}[], initialValue?: string | number, submit?: boolean, required?: boolean, placeholder?: string}[]} */
+      const sections = [
+        {
+          id: "action",
+          label: Tools.i18n.t("moderation_hosted_action_label"),
+          // Submit sections must not carry an initialValue: the
+          // initial-selection click would settle the whole dialog before
+          // the required reason input exists.
+          layout: "segmented",
+          submit: true,
+          choices: [
+            {
+              label: Tools.i18n.t("moderation_hosted_action_warn"),
+              value: ModerationActions.WARN,
+            },
+            {
+              label: Tools.i18n.t("moderation_hosted_action_kick"),
+              value: ModerationActions.KICK,
+              variant: "warning",
+            },
+            {
+              label: Tools.i18n.t("moderation_hosted_action_ban"),
+              value: ModerationActions.BAN,
+              variant: "danger",
+            },
+          ],
+        },
+        {
+          id: "reason",
+          label: Tools.i18n.t("moderation_hosted_reason_label"),
+          layout: "input",
+          required: true,
+          placeholder: Tools.i18n.t("moderation_hosted_reason_placeholder"),
+          choices: [],
+        },
+      ];
+      if (banned.length > 0) {
+        sections.push({
+          id: "unban",
+          label: Tools.i18n.t("moderation_hosted_unban_label"),
+          layout: "stacked",
+          submit: true,
+          choices: banned.map((entry) => ({
+            label: Tools.i18n.format("moderation_hosted_unban_choice", {
+              name: entry.name || entry.participantId,
+            }),
+            value: entry.participantId,
+          })),
+        });
+      }
+      return Tools.ui.showActionDialog({
+        title: Tools.i18n.format("moderation_hosted_title", {
+          name: target.name,
+        }),
+        message: target.participantId
+          ? Tools.i18n.format("moderation_hosted_participant_id", {
+              id: target.participantId,
+            })
+          : undefined,
+        sections,
+        cancelLabel: Tools.i18n.t("Cancel"),
+      });
+    })
+    .then((selection) => {
+      if (selection === null || selection === undefined) {
+        onSettled();
+        return;
+      }
+      const reason = String(selection.selections?.reason || "").trim();
+      /**
+       * @param {import("../../types/app-runtime").ModerationActionResultAck} result
+       */
+      const handleAck = (result) => {
+        ackResult = result;
+        if (result.ok === true) {
+          target.reported = true;
+          target.reportPending = false;
+          target.reportBanned =
+            selection.sectionId !== "unban" &&
+            selection.value === ModerationActions.BAN;
+        } else {
+          target.reportPending = false;
+        }
+        onSettled();
+      };
+      if (selection.sectionId === "unban") {
+        socket.emit(
+          SocketEvents.MODERATION_ACTION,
+          {
+            action: ModerationActions.UNBAN,
+            reason,
+            participantId: String(selection.value),
+          },
+          handleAck,
+        );
+        return;
+      }
+      socket.emit(
+        SocketEvents.MODERATION_ACTION,
+        {
+          action: /** @type {"warn" | "kick" | "ban"} */ (
+            /** @type {unknown} */ (selection.value)
+          ),
+          reason,
+          socketId: target.socketId,
+        },
+        handleAck,
+      );
+    })
+    .catch(() => {
+      if (ackResult === null) onSettled();
+    });
+}
+
+/**
  * @param {() => AppToolsState} getTools
  * @param {ConnectedUser} user
  * @param {PresenceModule} presence
@@ -1153,6 +1323,14 @@ function createConnectedUserRow(getTools, user, presence) {
     if (Tools.access.canBan === true) {
       connectedUser.reportPending = true;
       updateConnectedUserRow(getTools, row, connectedUser);
+      if (Tools.hostedEventPath) {
+        // Hosted Event governance: warn / kick / event ban / unban, each
+        // with a required reason, applied through the moderation event.
+        showHostedModerationDialog(Tools, connectedUser, () => {
+          updateConnectedUserRow(getTools, row, connectedUser);
+        });
+        return;
+      }
       void Tools.ui
         .showActionDialog({
           title: Tools.i18n.format("moderation_action_title", {

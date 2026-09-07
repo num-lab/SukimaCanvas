@@ -37,16 +37,24 @@ export const oneTouch = true;
 export const mouseCursor = "crosshair";
 export const requiredCapability = BOARD_CAPABILITY.CLEAR;
 export const liveMessageFields = /** @type {const} */ ({
-  [MutationType.CLEAR]: {},
+  [MutationType.CLEAR]: {
+    // Governance reason: hosted events require one and freeze it into the
+    // moderation trail; legacy boards never send it.
+    reason: "text?",
+  },
 });
 
-/** @param {ClearToolState} state */
-function createClearMessage(state) {
+/**
+ * @param {ClearToolState} state
+ * @param {string | undefined} reason
+ */
+function createClearMessage(state, reason) {
   return {
     tool: toolCode,
     type: MutationType.CLEAR,
     id: "",
     token: state.identity.token,
+    ...(reason ? { reason } : {}),
   };
 }
 
@@ -60,10 +68,48 @@ function confirmClearBoard(state) {
   });
 }
 
+/**
+ * Hosted events record who cleared and why: collect a reason after the
+ * confirmation before the message goes out.
+ *
+ * @param {ClearToolState} state
+ * @returns {Promise<string | null>} null when the moderator cancels
+ */
+function requestClearReason(state) {
+  return state.ui
+    .showActionDialog({
+      title: state.i18n.t("clear_reason_title"),
+      message: state.i18n.t("clear_reason_message"),
+      sections: [
+        {
+          id: "reason",
+          layout: "input",
+          placeholder: state.i18n.t("clear_reason_placeholder"),
+          required: true,
+          submit: true,
+          choices: [],
+        },
+      ],
+      cancelLabel: state.i18n.t("Cancel"),
+    })
+    .then((selection) => {
+      const reason = String(selection?.selections?.reason || "").trim();
+      return selection === null || reason === "" ? null : reason;
+    });
+}
+
 /** @param {ClearToolState} state */
 export function onstart(state) {
   void confirmClearBoard(state).then((confirmed) => {
-    if (confirmed) state.writes.drawAndSend(createClearMessage(state));
+    if (!confirmed) return;
+    if (!state.hostedEventPath) {
+      state.writes.drawAndSend(createClearMessage(state, undefined));
+      return;
+    }
+    void requestClearReason(state).then((reason) => {
+      if (reason === null) return;
+      state.writes.drawAndSend(createClearMessage(state, reason));
+    });
   });
   return false;
 }
@@ -81,5 +127,6 @@ export function boot(ctx) {
     i18n: ctx.runtime.i18n,
     ui: ctx.runtime.ui,
     writes: ctx.runtime.writes,
+    hostedEventPath: ctx.runtime.hostedEventPath,
   };
 }

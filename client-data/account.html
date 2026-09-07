@@ -1,0 +1,93 @@
+{{#> hosted-layout
+  pageTitle=hostedTranslations.hosted_account_title
+  canonical=true
+  workspaceNavigation=true
+}}
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-account-title">
+        <h1 id="hosted-account-title">{{hostedTranslations.hosted_account_title}}</h1>
+        <p class="hosted-account-note">{{hostedAccountEmail}}</p>
+        {{#if hostedAccountPasswordChanged}}
+        <p class="hosted-form-success" role="status">{{hostedAccountPasswordChanged}}</p>
+        {{/if}}
+        {{#if hostedAccountError}}
+        <p class="hosted-form-error" role="alert">{{hostedAccountError}}</p>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_account_password_title}}</h2>
+        <form method="post" action="account/password" novalidate>
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-account-current-password">{{hostedTranslations.hosted_account_current_password_label}}</label>
+            <input
+              type="password"
+              id="hosted-account-current-password"
+              name="currentPassword"
+              required
+              maxlength="128"
+              autocomplete="current-password"
+            />
+          </div>
+          <div class="hosted-form-field">
+            <label for="hosted-account-new-password">{{hostedTranslations.hosted_account_new_password_label}}</label>
+            <input
+              type="password"
+              id="hosted-account-new-password"
+              name="password"
+              required
+              minlength="8"
+              maxlength="128"
+              autocomplete="new-password"
+            />
+            <p class="hosted-form-hint">{{hostedTranslations.hosted_register_password_hint}}</p>
+          </div>
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_account_password_submit}}</button>
+        </form>
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_account_sessions_title}}</h2>
+        <ul class="hosted-session-list">
+          {{#hostedAccountSessions}}
+          <li class="hosted-session-item">
+            <div class="hosted-session-meta">
+              <span>{{../hostedTranslations.hosted_account_session_created}}: {{createdAtMs}}</span>
+              <span>{{../hostedTranslations.hosted_account_session_last_active}}: {{lastActiveAtMs}}</span>
+              {{#if current}}<span class="hosted-session-current">{{../hostedTranslations.hosted_account_session_current}}</span>{{/if}}
+            </div>
+            <form method="post" action="account/sessions/revoke">
+              <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+              <input type="hidden" name="publicId" value="{{publicId}}" />
+              <button type="submit" class="hosted-submit hosted-submit-small">{{../hostedTranslations.hosted_account_session_revoke}}</button>
+            </form>
+          </li>
+          {{/hostedAccountSessions}}
+        </ul>
+        {{#if hostedAccountHasOtherSessions}}
+        <form method="post" action="account/sessions/revoke-others">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_account_revoke_others}}</button>
+        </form>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_account_delete_title}}</h2>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_account_delete_hint}}</p>
+        <form method="post" action="account/delete" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-account-delete-password">{{hostedTranslations.hosted_account_current_password_label}}</label>
+            <input
+              type="password"
+              id="hosted-account-delete-password"
+              name="currentPassword"
+              required
+              maxlength="128"
+              autocomplete="current-password"
+            />
+          </div>
+          <button type="submit" class="hosted-submit hosted-submit-danger">{{hostedTranslations.hosted_account_delete_submit}}</button>
+        </form>
+        <p class="hosted-account-alt">
+          <a href="logout">{{hostedTranslations.hosted_nav_logout}}</a>
+        </p>
+      </section>
+    </main>
+{{/hosted-layout}}

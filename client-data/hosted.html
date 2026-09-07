@@ -1,0 +1,36 @@
+{{#> hosted-layout
+  pageTitle=hostedTranslations.hosted_service_name
+  canonical=true
+  workspaceNavigation=true
+  pageDescription=hostedTranslations.hosted_service_tagline
+}}
+    <main class="hosted-main">
+      <section class="hosted-hero" aria-labelledby="hosted-home-title">
+        <h1 id="hosted-home-title">{{hostedTranslations.hosted_home_title}}</h1>
+      </section>
+      <section class="hosted-events" aria-labelledby="hosted-events-title">
+        <h2 id="hosted-events-title" class="hosted-account-section-title">{{hostedTranslations.hosted_home_events_title}}</h2>
+        {{#if hostedHasEvents}}
+        <ul class="hosted-event-list">
+          {{#hostedEvents}}
+          <li class="hosted-event-card">
+            <a class="hosted-event-card-link" href="{{href}}">
+              {{#if coverHref}}
+              <img class="hosted-event-card-cover" src="{{coverHref}}" alt="" />
+              {{/if}}
+              <span class="hosted-event-card-name">{{name}}</span>
+              <span class="hosted-event-card-organizer">{{../hostedTranslations.hosted_event_hosted_by}} {{organizerName}}</span>
+              <span class="hosted-event-card-time">{{startsAt}}</span>
+              {{#if tagline}}
+              <span class="hosted-event-card-tagline">{{tagline}}</span>
+              {{/if}}
+            </a>
+          </li>
+          {{/hostedEvents}}
+        </ul>
+        {{else}}
+        <p class="hosted-status" aria-live="polite">{{hostedTranslations.hosted_home_status}}</p>
+        {{/if}}
+      </section>
+    </main>
+{{/hosted-layout}}

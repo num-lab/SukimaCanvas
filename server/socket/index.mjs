@@ -1,6 +1,6 @@
 import * as socketIO from "socket.io";
 import { SocketEvents } from "../../client-data/js/socket_events.js";
-import { BoardData } from "../board/data.mjs";
+import { loadOrGetLoadedBoard } from "../board/board_loader.mjs";
 import {
   deleteLoadedBoard,
   discardPinnedReplayBaselinesBefore,
@@ -9,8 +9,14 @@ import {
   getNextReplayPinExpiry,
   listLoadedBoards,
   resetBoardRegistry,
-  setLoadedBoard,
 } from "../board/registry.mjs";
+
+/** @import { BoardData } from "../board/data.mjs" */
+import { isGovernanceRole } from "../hosted_event/admission/index.mjs";
+import {
+  moderationSocketEffects,
+  registerModerationSocketEffects,
+} from "../hosted_event/moderation/socket_effects.mjs";
 import observability from "../observability/index.mjs";
 import { resetBans } from "./bans.mjs";
 import {
@@ -18,6 +24,11 @@ import {
   handleBroadcastWriteMessage,
   shouldTraceBroadcast,
 } from "./broadcasts.mjs";
+import {
+  handleHostedModerationActionMessage,
+  handleHostedReportUserMessage,
+  handleModerationStateMessage,
+} from "./hosted_moderation.mjs";
 import {
   boardStateForSocket,
   clientIpFallback,
@@ -56,6 +67,7 @@ import {
 import {
   getLastUserReportLog as getLastSocketUserReportLog,
   handleReportUserMessage,
+  notifyModerationDisconnectThenClose,
   resetSocketReports,
 } from "./reports.mjs";
 import { getSocketUserSecret } from "./request.mjs";
@@ -66,7 +78,7 @@ import { handleTurnstileTokenMessage } from "./turnstile.mjs";
 const { Server } = socketIO;
 const { logger, metrics, tracing } = observability;
 
-/** @import { AppSocket, MessageData, NormalizedMessageData, ReportUserPayload, ServerConfig, SetTemporaryModeratorPayload, TurnstileAckCallback } from "../../types/server-runtime.d.ts" */
+/** @import { AppSocket, MessageData, NormalizedMessageData, ReportUserPayload, ServerConfig, ServerRuntime, SetTemporaryModeratorPayload, TurnstileAckCallback } from "../../types/server-runtime.d.ts" */
 /** @typedef {{type: number, fromSeq: number, seq: number, _children: NormalizedMessageData[]}} ConnectionReplayBatch */
 /** @typedef {{ok: true, boardName: string, board: BoardData, baselineSeq: number, latestSeq: number, minReplayableSeq: number, replayBatch: ConnectionReplayBatch, outcome: "empty" | "replayed"} | {ok: false, reason: string, boardName?: string, baselineSeq?: number, latestSeq?: number, minReplayableSeq?: number, error?: unknown}} ConnectionReplayBootstrap */
 /** @type {Map<string, AppSocket>} */
@@ -284,22 +296,12 @@ function getActiveSocket(socketId) {
  */
 async function refreshUserAccess(boardName, userSecret, config) {
   if (!userSecret) return;
-  const boardPromise = getLoadedBoard(boardName);
-  if (!boardPromise) return;
-  const board = await boardPromise;
   const users = getBoardUserMap(boardName);
   for (const user of users.values()) {
     if (user.userSecret !== userSecret) continue;
     const targetSocket = activeSockets.get(user.socketId);
     if (!targetSocket || !targetSocket.rooms.has(boardName)) continue;
-    const boardState = boardStateForSocket(config, board, targetSocket);
-    user.canEdit = boardState.canEdit === true;
-    user.canClear = boardState.canClear === true;
-    user.canBan = boardState.canBan === true;
-    user.canGrantTemporaryModerator =
-      boardState.canGrantTemporaryModerator === true;
-    targetSocket.emit(SocketEvents.BOARDSTATE, boardState);
-    emitUserUpdatedToBoard(targetSocket, boardName, user);
+    await refreshSocketAccess(targetSocket, config);
   }
 }
 
@@ -382,31 +384,320 @@ function resolveClientIp(socket, boardName, config) {
 }
 
 /**
+ * Runs the Hosted Event admission gate for one socket: in hosted mode every
+ * connection must be admitted through the Hosted Event Module, which decides
+ * role, seat, and eligibility from the hosted session cookie and the event
+ * stores. Idempotent per socket — the middleware admits before replay, and
+ * the connection handler only fills the gap when the middleware never ran
+ * (socket scenarios). On success the socket carries its pinned board role and
+ * admission verdict for every later capability decision.
+ *
+ * @param {AppSocket} socket
+ * @returns {Promise<{ok: true} | {ok: false, reason: string}>}
+ */
+async function admitHostedSocket(socket) {
+  const hosted = socket.hostedEventModule;
+  if (hosted?.enabled !== true || socket.hostedEventAdmission) {
+    return { ok: true };
+  }
+  // Advance the durable lifecycle so admission sees the authoritative Board
+  // Session status at the current service clock.
+  if (typeof hosted.refreshEventLifecycle === "function") {
+    await hosted.refreshEventLifecycle();
+  }
+  const verdict = hosted.admitEventBoardSocket({
+    boardName: String(socket.handshake.query?.board || ""),
+    cookieHeader: socket.handshake.headers?.cookie,
+  });
+  if (verdict.ok === false) {
+    return { ok: false, reason: verdict.reason };
+  }
+  socket.hostedEventAdmission = verdict;
+  socket.hostedBoardRole = verdict.role;
+  return { ok: true };
+}
+
+/**
+ * Registers an admitted socket with the seat registry once the connection is
+ * real (replay succeeded), reconciling the pinned role with the account's
+ * actual writer slot. Registers nothing for Owner/Admin connections, which
+ * never contend for Participant Seats.
+ *
+ * @param {AppSocket} socket
+ * @returns {void}
+ */
+function registerHostedSocketConnection(socket) {
+  const hosted = socket.hostedEventModule;
+  const admission = socket.hostedEventAdmission;
+  if (hosted?.enabled !== true || !admission) return;
+  const connected = hosted.noteEventSocketConnected(admission, socket.id);
+  if (!connected.admitted) {
+    // A racing handshake consumed the last seat between this socket's
+    // preview and its registration; the drop is the authoritative refusal.
+    logger.warn("socket.hosted_seat_refused_on_connect", {
+      socket: socket.id,
+      board: admission.boardName,
+    });
+    closeSocket(socket, "connection", { reason: "event_full" });
+    return;
+  }
+  admission.socketId = socket.id;
+  // The writer slot may have been claimed between admission preview and
+  // connection; the registry's answer is authoritative.
+  if (!isGovernanceRole(admission.role)) {
+    socket.hostedBoardRole = connected.writable ? "editor" : "reader";
+    socket.boardPermissionContext = undefined;
+  }
+}
+
+/**
+ * Re-emits authoritative state for one socket after its hosted role changed
+ * (for example a read-only tab promoted to writer), keeping the tab's
+ * capabilities and presence in step without a reconnect.
+ *
+ * @param {AppSocket} targetSocket
+ * @param {ServerConfig} config
+ * @returns {Promise<void>}
+ */
+async function refreshSocketAccess(targetSocket, config) {
+  const boardPromise = getLoadedBoard(targetSocket.boardName || "");
+  if (!boardPromise) return;
+  const board = await boardPromise;
+  if (!targetSocket.rooms.has(board.name)) return;
+  const boardState = boardStateForSocket(config, board, targetSocket);
+  const user = getBoardUserMap(board.name).get(targetSocket.id);
+  if (user) {
+    user.canEdit = boardState.canEdit === true;
+    user.canClear = boardState.canClear === true;
+    user.canBan = boardState.canBan === true;
+    user.canGrantTemporaryModerator =
+      boardState.canGrantTemporaryModerator === true;
+    emitUserUpdatedToBoard(targetSocket, board.name, user);
+  }
+  targetSocket.emit(SocketEvents.BOARDSTATE, boardState);
+}
+
+/**
+ * Releases a hosted socket's seat on disconnect and refreshes the companion
+ * connection promoted to the account's writer slot, if any.
+ *
+ * @param {AppSocket} socket
+ * @param {ServerConfig} config
+ * @returns {Promise<void>}
+ */
+async function releaseHostedSocket(socket, config) {
+  const hosted = socket.hostedEventModule;
+  const admission = socket.hostedEventAdmission;
+  if (hosted?.enabled !== true || !admission) return;
+  const released = hosted.releaseEventSocket(socket.id);
+  if (!released.promotedSocketId) return;
+  const promoted = activeSockets.get(released.promotedSocketId);
+  if (!promoted || isGovernanceRole(promoted.hostedEventAdmission?.role)) {
+    return;
+  }
+  promoted.hostedBoardRole = "editor";
+  promoted.boardPermissionContext = undefined;
+  await refreshSocketAccess(promoted, config);
+}
+
+/**
+ * Re-runs the hosted admission decision for one live socket. Used when the
+ * account's event-scoped authorizations changed under it (for example a
+ * revoked Event Moderator grant): sockets still admissible keep their
+ * connection with refreshed capabilities, refused ones are dropped so the
+ * next connect decides honestly.
+ *
+ * @param {AppSocket} targetSocket
+ * @param {ServerConfig} config
+ * @returns {Promise<void>}
+ */
+async function refreshHostedSocketAdmission(targetSocket, config) {
+  const hosted = targetSocket.hostedEventModule;
+  const admission = targetSocket.hostedEventAdmission;
+  if (hosted?.enabled !== true || !admission) return;
+  const verdict = hosted.admitEventBoardSocket({
+    boardName: admission.boardName,
+    cookieHeader: targetSocket.handshake.headers?.cookie,
+  });
+  if (verdict.ok === false) {
+    logger.info("socket.hosted_access_revoked", {
+      socket: targetSocket.id,
+      board: admission.boardName,
+      reason: verdict.reason,
+    });
+    closeSocket(targetSocket, "connection", { reason: verdict.reason });
+    return;
+  }
+  const previousRole = admission.role;
+  targetSocket.hostedEventAdmission = verdict;
+  targetSocket.hostedBoardRole = verdict.role;
+  targetSocket.boardPermissionContext = undefined;
+  if (previousRole !== verdict.role && !isGovernanceRole(verdict.role)) {
+    // A governance connection demoted to a member seat must now join the
+    // seat registry it previously bypassed.
+    const connected = hosted.noteEventSocketConnected(verdict, targetSocket.id);
+    if (!connected.admitted) {
+      closeSocket(targetSocket, "connection", { reason: "event_full" });
+      return;
+    }
+    targetSocket.hostedBoardRole = connected.writable ? "editor" : "reader";
+  }
+  await refreshSocketAccess(targetSocket, config);
+}
+
+/**
+ * Ends the live connections of a sealed Board Session on their read-only
+ * completion state: every socket is demoted to a read-only connection and
+ * re-emitted its authoritative board state carrying the `eventClosed` marker,
+ * so participants finish viewing the drained board but can never regain write
+ * access through the old socket, page, or mutations. Connections stay open —
+ * a reconnect is refused by admission and routes back to the event page,
+ * which explains the completed event.
+ *
+ * @param {string} boardName
+ * @param {ServerConfig} config
+ * @returns {Promise<void>}
+ */
+async function notifyBoardSessionClosed(boardName, config) {
+  const boardPromise = getLoadedBoard(boardName);
+  if (!boardPromise) return;
+  const board = await boardPromise;
+  for (const target of [...activeSockets.values()]) {
+    const admission = target.hostedEventAdmission;
+    if (!admission || admission.boardName !== boardName) continue;
+    if (!target.rooms.has(boardName)) continue;
+    target.hostedBoardRole = "reader";
+    target.boardPermissionContext = undefined;
+    const user = getBoardUserMap(boardName).get(target.id);
+    if (user) {
+      user.canEdit = false;
+      user.canClear = false;
+      user.canBan = false;
+      user.canGrantTemporaryModerator = false;
+      emitUserUpdatedToBoard(target, boardName, user);
+    }
+    target.emit(SocketEvents.BOARDSTATE, {
+      ...boardStateForSocket(config, board, target),
+      eventClosed: true,
+    });
+  }
+}
+
+/**
+ * Registers the real-time Board Session close effects with the Hosted Event
+ * Module: when the close pipeline seals a session, its live sockets end on
+ * the read-only completion state through {@link notifyBoardSessionClosed}.
+ *
+ * @param {ServerConfig} config
+ * @param {{enabled: boolean, registerBoardCloseEffects?: (effects: {notifyBoardClosed: (boardName: string) => Promise<void>}) => void} | undefined} hostedEventModule
+ * @returns {void}
+ */
+function registerCloseEffects(config, hostedEventModule) {
+  if (hostedEventModule?.enabled !== true) return;
+  hostedEventModule.registerBoardCloseEffects?.({
+    notifyBoardClosed: (boardName) =>
+      notifyBoardSessionClosed(boardName, config),
+  });
+}
+
+/**
+ * Registers the socket layer's moderation effects: the real-time
+ * consequences of hosted governance decisions. Registered once per IO start
+ * so hosted routes can evict banned accounts and refresh revoked moderators
+ * without owning the socket table.
+ *
+ * @param {ServerConfig} config
+ * @returns {void}
+ */
+function registerModerationEffects(config) {
+  registerModerationSocketEffects({
+    evictEventAccount(eventId, accountId, notice) {
+      for (const target of [...activeSockets.values()]) {
+        const admission = target.hostedEventAdmission;
+        if (
+          !admission ||
+          admission.eventId !== eventId ||
+          admission.accountId !== accountId
+        ) {
+          continue;
+        }
+        notifyModerationDisconnectThenClose(
+          admission.boardName,
+          target,
+          closeSocket,
+          /** @type {{banDurationMs: number, source: "moderator" | "peer_report" | "event_ban"}} */ (
+            notice
+          ),
+        );
+      }
+    },
+    async refreshEventAccountAccess(eventId, accountId) {
+      for (const target of [...activeSockets.values()]) {
+        const admission = target.hostedEventAdmission;
+        if (
+          !admission ||
+          admission.eventId !== eventId ||
+          admission.accountId !== accountId
+        ) {
+          continue;
+        }
+        await refreshHostedSocketAdmission(target, config);
+      }
+    },
+  });
+}
+
+/**
  * @param {any} app
  * @param {ServerConfig} config
+ * @param {ServerRuntime} runtime
  * @returns {Promise<import("socket.io").Server>}
  */
-async function startIO(app, config) {
+async function startIO(app, config, runtime) {
   io = new Server(app, { path: "/socket.io" });
+  // Real-time moderation effects (evictions, access refreshes) are applied
+  // through this registry by the hosted governance routes and handlers.
+  registerModerationEffects(config);
+  // Board Session close effects: sealed sessions end their live sockets on a
+  // read-only completion state instead of stranding them mid-draw.
+  registerCloseEffects(config, runtime.hostedEventModule);
   io.use(
     (
       /** @type {AppSocket} */ socket,
       /** @type {(error?: Error) => void} */ next,
     ) => {
-      prepareConnectionReplay(
-        socket,
-        config,
-        getBoard,
-        dropLoadedBoardInstance,
-        boardDebugFields,
-      )
-        .then((replay) => {
-          if (replay.ok === true) {
-            socket.replayBootstrap = replay;
-            next();
+      // Keep the same cold runtime object available to the real Socket.IO
+      // lifecycle as the HTTP routes receive. Hosted capabilities can extend
+      // this seam without creating a second configuration or template graph.
+      socket.hostedEventModule = runtime.hostedEventModule;
+      // In hosted mode every connection passes the Hosted Event admission
+      // gate before anything else: roles and seats are decided here, and
+      // legacy boards or unmet admission conditions never reach replay.
+      admitHostedSocket(socket)
+        .then((admission) => {
+          if (admission.ok === false) {
+            next(
+              createConnectionReplayError({
+                ok: false,
+                reason: admission.reason,
+              }),
+            );
             return;
           }
-          next(createConnectionReplayError(replay));
+          return prepareConnectionReplay(
+            socket,
+            config,
+            getBoard,
+            dropLoadedBoardInstance,
+            boardDebugFields,
+          ).then((replay) => {
+            if (replay.ok === true) {
+              socket.replayBootstrap = replay;
+              next();
+              return;
+            }
+            next(createConnectionReplayError(replay));
+          });
         })
         .catch((error) => {
           next(error instanceof Error ? error : new Error(String(error)));
@@ -422,7 +713,13 @@ async function startIO(app, config) {
   return io;
 }
 
-/** Returns a promise to a BoardData with the given name
+/**
+ * Returns a promise to a BoardData with the given name. The load-or-reuse
+ * instance cache itself lives in the shared board loader, so the close
+ * pipeline observes the same instances; this wrapper adds the socket layer's
+ * stale-save policy (drop the instance and disconnect its sockets) and the
+ * load gauge.
+ *
  * @param {string} name
  * @param {ServerConfig} config
  * @returns {Promise<BoardData>}
@@ -436,26 +733,17 @@ function getBoard(name, config) {
       });
     }
     return loadedBoard;
-  } else {
-    const board = BoardData.load(name, config).then((loaded) => {
-      /**
-       * @param {{actualFileSeq?: number, durationMs?: number, saveTargetSeq?: number}} details
-       * @returns {Promise<void>}
-       */
-      loaded.onStaleSave = function onStaleSave(details) {
-        return handleStaleBoardSave(loaded, details);
-      };
-      return loaded;
-    });
-    setLoadedBoard(name, board);
-    updateLoadedBoardsGauge();
-    if (logger.isEnabled("debug")) {
-      logger.debug("board.cache_miss", {
-        board: name,
-      });
-    }
-    return board;
   }
+  const board = loadOrGetLoadedBoard(name, config, {
+    onStaleSave: handleStaleBoardSave,
+  });
+  updateLoadedBoardsGauge();
+  if (logger.isEnabled("debug")) {
+    logger.debug("board.cache_miss", {
+      board: name,
+    });
+  }
+  return board;
 }
 
 const socketBroadcastRuntime = {
@@ -467,6 +755,18 @@ const socketBroadcastRuntime = {
     /** @type {AppSocket} */ socket,
   ) {
     return syncedPersistentSockets.has(socket.id);
+  },
+  // A board whose accepted mutation failed its durable ledger write holds
+  // state that must not exist; dropping the instance disconnects its sockets
+  // and the next connection reloads from snapshot plus ledger.
+  discardBoardInstance: function discardBoardInstance(
+    /** @type {BoardData} */ board,
+    /** @type {{logEvent?: string} | undefined} */ details,
+  ) {
+    return dropLoadedBoardInstance(board, {
+      reason: "ledger_unavailable",
+      ...details,
+    });
   },
 };
 
@@ -554,6 +854,14 @@ async function bootstrapSocketBoard(socket, replay, config) {
  * @param {ServerConfig} config
  */
 async function handleSocketConnection(socket, config) {
+  // Fill in hosted admission when the middleware never ran (socket
+  // scenarios); in the real server this is already decided before replay.
+  const hostedAdmission = await admitHostedSocket(socket);
+  if (hostedAdmission.ok === false) {
+    rejectSocketRequest(socket, "connection", hostedAdmission.reason);
+    closeSocket(socket, "connection", { reason: hostedAdmission.reason });
+    return;
+  }
   const replayBootstrap = /** @type {ConnectionReplayBootstrap | undefined} */ (
     socket.replayBootstrap
   );
@@ -576,6 +884,9 @@ async function handleSocketConnection(socket, config) {
   activeSockets.set(socket.id, socket);
   updateActiveSocketConnectionsGauge();
   metrics.recordSocketConnection("connected");
+  // The connection is real: register it with the hosted seat registry so the
+  // account's writable slot and seat occupancy reflect live sockets only.
+  registerHostedSocketConnection(socket);
 
   onSocketEvent(socket, "error", function onSocketError(error) {
     logger.error("socket.error", {
@@ -679,6 +990,23 @@ async function handleSocketConnection(socket, config) {
           }),
         },
         function traceReportUser() {
+          // Hosted events route reports through the event governance flow:
+          // they are recorded and surfaced to the event's moderators, never
+          // a disconnect trigger. Legacy boards keep the peer-report flow.
+          const hosted = socket.hostedEventModule;
+          if (socket.hostedEventAdmission && hosted?.enabled === true) {
+            return handleHostedReportUserMessage({
+              socket,
+              boardName: normalizedName,
+              message,
+              config,
+              now: Date.now(),
+              getActiveSocket,
+              closeSocket,
+              hosted,
+              effects: moderationSocketEffects(),
+            });
+          }
           handleReportUserMessage({
             socket,
             boardName: normalizedName,
@@ -687,6 +1015,69 @@ async function handleSocketConnection(socket, config) {
             now: Date.now(),
             getActiveSocket,
             closeSocket,
+          });
+          return undefined;
+        },
+      );
+    },
+  );
+
+  onSocketEvent(
+    socket,
+    SocketEvents.MODERATION_ACTION,
+    function onModerationAction(
+      /** @type {unknown} */ message,
+      /** @type {((result: unknown) => void) | undefined} */ ack,
+    ) {
+      const normalizedName = boardName;
+      return tracing.withActiveSpan(
+        "socket.moderation_action",
+        {
+          kind: tracing.SpanKind.INTERNAL,
+          attributes: socketTraceAttributes("moderation_action", {
+            "wbo.board": normalizedName,
+          }),
+        },
+        function traceModerationAction() {
+          return handleHostedModerationActionMessage({
+            socket,
+            boardName: normalizedName,
+            message,
+            config,
+            now: Date.now(),
+            getActiveSocket,
+            closeSocket,
+            hosted: socket.hostedEventModule,
+            effects: moderationSocketEffects(),
+            ack,
+          });
+        },
+      );
+    },
+  );
+
+  onSocketEvent(
+    socket,
+    SocketEvents.MODERATION_STATE,
+    function onModerationState(
+      /** @type {((result: unknown) => void) | undefined} */ ack,
+    ) {
+      const normalizedName = boardName;
+      return tracing.withActiveSpan(
+        "socket.moderation_state",
+        {
+          kind: tracing.SpanKind.INTERNAL,
+          attributes: socketTraceAttributes("moderation_state", {
+            "wbo.board": normalizedName,
+          }),
+        },
+        function traceModerationState() {
+          return handleModerationStateMessage({
+            socket,
+            boardName: normalizedName,
+            config,
+            hosted: socket.hostedEventModule,
+            ack,
           });
         },
       );
@@ -719,6 +1110,14 @@ async function handleSocketConnection(socket, config) {
       syncedPersistentSockets.delete(socket.id);
       updateActiveSocketConnectionsGauge();
       metrics.recordSocketConnection("disconnected");
+      // Release the hosted seat (and promote a companion to the writer slot)
+      // before the room teardown so the promotion can still find its board.
+      void releaseHostedSocket(socket, config).catch((error) => {
+        logger.error("socket.hosted_release_failed", {
+          socket: socket.id,
+          error,
+        });
+      });
       socket.rooms.forEach(
         async function disconnectFrom(/** @type {string} */ room) {
           const boardPromise = getLoadedBoard(room);
@@ -895,6 +1294,32 @@ async function shutdownBoards() {
 }
 
 export const __test = {
+  admitHostedSocket: function admitHostedSocketForTest(
+    /** @type {AppSocket} */ socket,
+  ) {
+    return admitHostedSocket(socket);
+  },
+  /**
+   * Test seam: registers the production moderation socket effects against a
+   * scenario config so eviction and access-refresh tests exercise the real
+   * implementation through handleSocketConnection sockets.
+   */
+  registerModerationEffects: function registerModerationEffectsForTest(
+    /** @type {ServerConfig} */ config,
+  ) {
+    registerModerationEffects(config);
+  },
+  /**
+   * Test seam: registers the production Board Session close effects against a
+   * hosted module so close tests exercise the real read-only completion
+   * notification through handleSocketConnection sockets.
+   */
+  registerCloseEffects: function registerCloseEffectsForTest(
+    /** @type {ServerConfig} */ config,
+    /** @type {{enabled: boolean, registerBoardCloseEffects?: (effects: {notifyBoardClosed: (boardName: string) => Promise<void>}) => void} | undefined} */ hostedEventModule,
+  ) {
+    registerCloseEffects(config, hostedEventModule);
+  },
   buildBoardUserRecord: function buildBoardUserRecordForTest(
     /** @type {AppSocket} */ socket,
     /** @type {string} */ boardName,

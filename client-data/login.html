@@ -1,0 +1,71 @@
+{{#> hosted-layout
+  pageTitle=hostedTranslations.hosted_login_title
+  canonical=true
+}}
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-login-title">
+        {{#if hostedLoginSignedInEmail}}
+        <h1 id="hosted-login-title">{{hostedTranslations.hosted_login_title}}</h1>
+        <p class="hosted-account-note">{{hostedTranslations.hosted_login_signed_in_intro}}</p>
+        <p class="hosted-account-note">{{hostedLoginSignedInAs}}</p>
+        <p class="hosted-account-actions">
+          <a class="hosted-primary-link" href="logout">{{hostedTranslations.hosted_nav_logout}}</a>
+        </p>
+        {{else}}
+        <h1 id="hosted-login-title">{{hostedTranslations.hosted_login_title}}</h1>
+        <p class="hosted-account-intro">{{hostedTranslations.hosted_login_intro}}</p>
+        {{#if hostedLoginVerifiedNotice}}
+        <p class="hosted-form-success" role="status">{{hostedLoginVerifiedNotice}}</p>
+        {{/if}}
+        {{#if hostedLoginResetNotice}}
+        <p class="hosted-form-success" role="status">{{hostedLoginResetNotice}}</p>
+        {{/if}}
+        {{#if hostedLoginDeletedNotice}}
+        <p class="hosted-form-success" role="status">{{hostedLoginDeletedNotice}}</p>
+        {{/if}}
+        {{#if hostedLoginError}}
+        <p class="hosted-form-error" role="alert">{{hostedLoginError}}</p>
+        {{/if}}
+        <form method="post" action="login" novalidate>
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-login-email">{{hostedTranslations.hosted_login_email_label}}</label>
+            <input
+              type="email"
+              id="hosted-login-email"
+              name="email"
+              value="{{hostedLoginEmailValue}}"
+              required
+              maxlength="254"
+              autocomplete="email"
+            />
+          </div>
+          <div class="hosted-form-field">
+            <label for="hosted-login-password">{{hostedTranslations.hosted_login_password_label}}</label>
+            <input
+              type="password"
+              id="hosted-login-password"
+              name="password"
+              required
+              maxlength="128"
+              autocomplete="current-password"
+            />
+          </div>
+          {{#if hostedCaptchaRequired}}
+          <div class="hosted-form-field">
+            <div class="cf-turnstile" data-sitekey="{{hostedCaptchaSiteKey}}"></div>
+            <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+          </div>
+          {{/if}}
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_login_submit}}</button>
+        </form>
+        <p class="hosted-account-alt">
+          <a href="forgot">{{hostedTranslations.hosted_login_forgot_link}}</a>
+        </p>
+        <p class="hosted-account-alt">
+          <a href="register">{{hostedTranslations.hosted_login_register_link}}</a>
+        </p>
+        {{/if}}
+      </section>
+    </main>
+{{/hosted-layout}}

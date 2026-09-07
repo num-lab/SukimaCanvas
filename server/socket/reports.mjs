@@ -1,12 +1,12 @@
-import observability from "../observability/index.mjs";
 import { MODERATION_RULE_IDS } from "../../client-data/js/moderation_rules.js";
 import {
   ModerationDisconnectSources,
   SocketEvents,
 } from "../../client-data/js/socket_events.js";
+import observability from "../observability/index.mjs";
 import { banBoardUser, normalizeBanTtlMs } from "./bans.mjs";
-import { getBoardUser, getBoardUserMap } from "./presence.mjs";
 import { canBanOnBoard, canReportOnBoard } from "./policy.mjs";
+import { getBoardUser, getBoardUserMap } from "./presence.mjs";
 
 const { logger, tracing } = observability;
 const MODERATION_DISCONNECT_CLOSE_TIMEOUT_MS = 150;
@@ -138,6 +138,10 @@ function disconnectReportSocket(boardName, targetSocket, closeSocket) {
 }
 
 /**
+ * Emits the moderation disconnect notice to one socket and closes it once
+ * the notice is delivered (or a short timeout lapses). Shared with the
+ * hosted moderation actions so evictions use one payload contract.
+ *
  * @param {string} boardName
  * @param {AppSocket} targetSocket
  * @param {CloseSocket} closeSocket
@@ -397,4 +401,9 @@ function resetSocketReports() {
   lastUserReportLog = null;
 }
 
-export { getLastUserReportLog, handleReportUserMessage, resetSocketReports };
+export {
+  getLastUserReportLog,
+  handleReportUserMessage,
+  notifyModerationDisconnectThenClose,
+  resetSocketReports,
+};

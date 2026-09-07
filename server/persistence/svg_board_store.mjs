@@ -207,6 +207,15 @@ async function readStoredSvgWithFallback(
       if (isPrimaryStoredSvgFile(candidate.file)) {
         try {
           await quarantineUnreadableSvg(candidate.file);
+          // Recovery continues from the backup or the durable ledger, but the
+          // unreadable snapshot must stay an explicit, observable failure —
+          // never a silent repair.
+          logger.error("svg.snapshot_unreadable_quarantined", {
+            board: boardName,
+            "wbo.board.source": candidate.source,
+            "file.path": candidate.file,
+            reason: error instanceof Error ? error.message : String(error),
+          });
         } catch (quarantineError) {
           if (errorCode(quarantineError) !== "ENOENT") throw quarantineError;
         }

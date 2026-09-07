@@ -1,0 +1,29 @@
+{{#> hosted-layout
+  pageTitle=hostedCanvasEventName
+  noIndex=true
+  workspaceNavigation=true
+}}
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card hosted-canvas-page" aria-labelledby="hosted-canvas-title">
+        <h1 id="hosted-canvas-title">{{hostedCanvasEventName}}</h1>
+        <p class="hosted-account-note">{{hostedTranslations.hosted_publication_readonly_note}}</p>
+
+        <figure class="hosted-canvas-frame">
+          {{{hostedCanvasSvg}}}
+        </figure>
+
+        {{#if hostedCanvasAttribution}}
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_publication_contributors}}</h2>
+        {{#if hostedCanvasHasContributors}}
+        <ul class="hosted-contributor-list">
+          {{#hostedCanvasContributors}}
+          <li class="hosted-contributor-item"><code>{{participantId}}</code></li>
+          {{/hostedCanvasContributors}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_publication_contributors_empty}}</p>
+        {{/if}}
+        {{/if}}
+      </section>
+    </main>
+{{/hosted-layout}}

@@ -91,12 +91,63 @@ export function parseCommaSeparatedEnv(name, env = process.env) {
 }
 
 /**
+ * Parses a comma-separated list of email addresses into a deduplicated array of
+ * trimmed, lowercased entries. Empty entries are dropped. Used to provision
+ * privileged identities (such as Platform Operators) from deployment config
+ * rather than self-service registration.
+ *
+ * @param {string} name
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string[]}
+ */
+export function parseEmailListEnv(name, env = process.env) {
+  const value = env[name];
+  if (value === undefined || value.trim() === "") return [];
+  const seen = new Set();
+  for (const entry of value.split(",")) {
+    const normalized = entry.trim().toLowerCase();
+    if (normalized !== "") seen.add(normalized);
+  }
+  return [...seen];
+}
+
+/**
  * @param {string} name
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {boolean}
  */
 export function parseDisabledFlagEnv(name, env = process.env) {
   return env[name] !== "disabled";
+}
+
+/**
+ * @param {string} name
+ * @param {boolean} defaultValue
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {boolean}
+ */
+export function parseBooleanEnv(name, defaultValue, env = process.env) {
+  const value = env[name];
+  if (value === undefined || value.trim() === "") return defaultValue;
+
+  switch (value.trim().toLowerCase()) {
+    case "1":
+    case "true":
+    case "yes":
+    case "on":
+    case "enabled":
+      return true;
+    case "0":
+    case "false":
+    case "no":
+    case "off":
+    case "disabled":
+      return false;
+    default:
+      throw new Error(
+        `Invalid ${name}: ${value}. Expected a boolean value such as true or false.`,
+      );
+  }
 }
 
 /**

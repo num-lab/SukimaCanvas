@@ -1,0 +1,61 @@
+{{#> hosted-layout
+  pageTitle=hostedTranslations.hosted_organizer_console_title
+  canonical=true
+  workspaceNavigation=true
+}}
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-organizer-console-title">
+        <h1 id="hosted-organizer-console-title">{{hostedTranslations.hosted_organizer_console_title}}</h1>
+        <p class="hosted-account-intro">{{hostedTranslations.hosted_organizer_console_intro}}</p>
+
+        {{#if hostedOrganizerConsoleError}}
+        <p class="hosted-form-error" role="alert">{{hostedOrganizerConsoleError}}</p>
+        {{/if}}
+
+        {{#if hostedOrganizerHasInvitations}}
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_organizer_invitations_title}}</h2>
+        <ul class="hosted-organizer-queue">
+          {{#hostedOrganizerInvitations}}
+          <li class="hosted-organizer-queue-item">
+            <div class="hosted-organizer-queue-meta">
+              <span class="hosted-organizer-queue-name">{{organizerName}}</span>
+              <span>{{roleLabel}}</span>
+            </div>
+            <div class="hosted-organizer-invitation-actions">
+              <form method="post" action="organizer/invitations/{{invitationId}}/accept">
+                <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+                <button type="submit" class="hosted-submit hosted-submit-small">{{../hostedTranslations.hosted_organizer_invitation_accept}}</button>
+              </form>
+              <form method="post" action="organizer/invitations/{{invitationId}}/decline">
+                <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+                <button type="submit" class="hosted-submit hosted-submit-small">{{../hostedTranslations.hosted_organizer_invitation_decline}}</button>
+              </form>
+            </div>
+          </li>
+          {{/hostedOrganizerInvitations}}
+        </ul>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_organizer_memberships_title}}</h2>
+        {{#if hostedOrganizerHasMemberships}}
+        <ul class="hosted-organizer-queue">
+          {{#hostedOrganizerMemberships}}
+          <li class="hosted-organizer-queue-item">
+            <div class="hosted-organizer-queue-meta">
+              <span class="hosted-organizer-queue-name">{{name}}</span>
+              <span>{{roleLabel}}</span>
+            </div>
+            <a class="hosted-primary-link" href="organizers/{{organizerId}}">{{../hostedTranslations.hosted_organizer_manage_link}}</a>
+          </li>
+          {{/hostedOrganizerMemberships}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_organizer_no_memberships}}</p>
+        {{/if}}
+
+        <p class="hosted-account-alt">
+          <a href="organizer/apply">{{hostedTranslations.hosted_nav_organizer_apply}}</a>
+        </p>
+      </section>
+    </main>
+{{/hosted-layout}}

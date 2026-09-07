@@ -105,3 +105,5 @@ export function appendSetCookieHeader(response, cookieValue) {
   }
   response.setHeader("Set-Cookie", [String(existing), cookieValue]);
 }
+
+export { parseCookieHeader };

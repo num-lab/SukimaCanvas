@@ -13,6 +13,14 @@ import {
  */
 export function createBoardRuntimeShellFromPage() {
   const colorPresets = DEFAULT_COLOR_PRESETS;
+  // The shell may be served at a URL that is not a /boards/ path (the Hosted
+  // Event board page); the server-rendered identity wins over URL derivation.
+  const boardIdentity =
+    /** @type {{board?: unknown, socketIoPath?: unknown, hostedEventPath?: unknown}} */ (
+      parseEmbeddedJson("board-identity", {})
+    );
+  const embeddedBoardName =
+    typeof boardIdentity.board === "string" ? boardIdentity.board : "";
   const tools = /** @type {AppToolsState} */ (
     /** @type {unknown} */ (
       initializeCoreRuntime(
@@ -24,7 +32,19 @@ export function createBoardRuntimeShellFromPage() {
           serverConfig: /** @type {ServerConfig} */ (
             parseEmbeddedJson("configuration", {})
           ),
-          boardName: resolveBoardName(window.location.pathname),
+          boardName:
+            embeddedBoardName !== ""
+              ? embeddedBoardName
+              : resolveBoardName(window.location.pathname),
+          socketIoPath:
+            typeof boardIdentity.socketIoPath === "string"
+              ? boardIdentity.socketIoPath
+              : "",
+          hostedEventPath:
+            typeof boardIdentity.hostedEventPath === "string" &&
+            boardIdentity.hostedEventPath !== ""
+              ? boardIdentity.hostedEventPath
+              : undefined,
           token: new URL(window.location.href).searchParams.get("token"),
           colorPresets,
           initialPreferences: createInitialPreferences(colorPresets),

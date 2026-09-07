@@ -3,6 +3,9 @@ services:
   www:
     volumes:
       - /opt/app/server-data:/opt/app/server-data
+      # Local/file-backed profile only. Production PostgreSQL + R2 deployments
+      # use docker-compose.hosted.yml instead.
+      - /opt/app/hosted-data:/opt/app/hosted-data
     ports:
       - "80:80"
     build:

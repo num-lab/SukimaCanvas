@@ -126,10 +126,14 @@ export class IdentityModule {
   /**
    * @param {string} boardName
    * @param {string | null} token
+   * @param {string} [socketIoPath] Server-computed socket.io endpoint, used
+   *   when the page URL is not a /boards/ path.
    */
-  constructor(boardName, token) {
+  constructor(boardName, token, socketIoPath) {
     this.boardName = boardName;
     this.token = token;
+    /** @type {string | undefined} */
+    this.socketIoPath = socketIoPath || "";
   }
 }
 

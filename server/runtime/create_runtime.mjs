@@ -4,13 +4,44 @@ import { fileURLToPath } from "node:url";
 
 import serveStatic from "serve-static";
 
+import { createHostedEventModule } from "../hosted_event/module.mjs";
 import { CSP, staticFileCacheControl } from "../http/cache_policy.mjs";
+import { parseRequestUrl } from "../http/request_url.mjs";
 import * as templating from "../http/templating.mjs";
 import observability from "../observability/index.mjs";
 
 const { logger } = observability;
 const RUNTIME_DIR = path.dirname(fileURLToPath(import.meta.url));
 const BUNDLED_WEBROOT = path.resolve(RUNTIME_DIR, "../../client-data");
+// Hosted-only assets exist outside legacy WBO; raw hosted page templates are
+// rendered exclusively through their routes in every mode.
+const HOSTED_ASSET_PATHS = new Set(["/hosted.css"]);
+const HOSTED_TEMPLATE_PATHS = new Set([
+  "/hosted.html",
+  "/source.html",
+  "/register.html",
+  "/login.html",
+  "/verify.html",
+  "/logout.html",
+  "/forgot.html",
+  "/reset.html",
+  "/account.html",
+  "/organizer-apply.html",
+  "/operator.html",
+  "/operator-application.html",
+  "/organizer-console.html",
+  "/organizer-manage.html",
+  "/organizer-reservations.html",
+  "/organizer-reservation.html",
+  "/operator-reservations.html",
+  "/operator-reservation.html",
+  "/operator-changes.html",
+  "/operator-change.html",
+  "/operator-historical-imports.html",
+  "/event.html",
+  "/organizer-event.html",
+  "/partials/hosted-layout.html",
+]);
 
 /** @import { HttpResponse, ServerConfig, ServerRuntime } from "../../types/server-runtime.d.ts" */
 
@@ -59,22 +90,54 @@ function configuredTemplatePathWithBundledFallback(config, fileName) {
  * @returns {import("../../types/server-runtime.d.ts").StaticFileServer}
  */
 function createStaticFileServer(config) {
-  const configuredFileserver = createSingleRootStaticFileServer(
-    config,
-    config.WEBROOT,
+  /**
+   * @param {import("../../types/server-runtime.d.ts").StaticFileServer} fileserver
+   * @returns {import("../../types/server-runtime.d.ts").StaticFileServer}
+   */
+  const skipHostedTemplates = (fileserver) => (request, response, next) => {
+    if (HOSTED_TEMPLATE_PATHS.has(parseRequestUrl(request.url).pathname)) {
+      next();
+      return;
+    }
+    fileserver(request, response, next);
+  };
+
+  const configuredFileserver = skipHostedTemplates(
+    createSingleRootStaticFileServer(config, config.WEBROOT),
   );
   const configuredRoot = path.resolve(config.WEBROOT);
-  if (configuredRoot === BUNDLED_WEBROOT) return configuredFileserver;
+  const bundledRootIsConfigured = configuredRoot === BUNDLED_WEBROOT;
+  if (bundledRootIsConfigured && config.HOSTED_MODE === true) {
+    return configuredFileserver;
+  }
+  if (bundledRootIsConfigured) {
+    return (request, response, next) => {
+      const isHostedAsset = HOSTED_ASSET_PATHS.has(
+        parseRequestUrl(request.url).pathname,
+      );
+      if (isHostedAsset) {
+        next();
+        return;
+      }
+      configuredFileserver(request, response, next);
+    };
+  }
 
-  const bundledFileserver = createSingleRootStaticFileServer(
-    config,
-    BUNDLED_WEBROOT,
+  const bundledFileserver = skipHostedTemplates(
+    createSingleRootStaticFileServer(config, BUNDLED_WEBROOT),
   );
   return (request, response, next) => {
+    const isHostedAsset =
+      config.HOSTED_MODE !== true &&
+      HOSTED_ASSET_PATHS.has(parseRequestUrl(request.url).pathname);
     const originalUrl = request.url;
     configuredFileserver(request, response, (error) => {
       if (error !== undefined) {
         next(error);
+        return;
+      }
+      if (isHostedAsset) {
+        next();
         return;
       }
       request.url = originalUrl;
@@ -134,14 +197,126 @@ function createServerRuntime(config) {
     config,
     { htmlHeadSnippet },
   );
+  const hostedEventModule = createHostedEventModule(config, {
+    layoutTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "partials/hosted-layout.html",
+    ),
+    homeTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "hosted.html",
+    ),
+    sourceTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "source.html",
+    ),
+    registerTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "register.html",
+    ),
+    loginTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "login.html",
+    ),
+    verifyTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "verify.html",
+    ),
+    logoutTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "logout.html",
+    ),
+    forgotTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "forgot.html",
+    ),
+    resetTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "reset.html",
+    ),
+    accountTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "account.html",
+    ),
+    organizerApplyTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "organizer-apply.html",
+    ),
+    operatorTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "operator.html",
+    ),
+    operatorApplicationTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "operator-application.html",
+    ),
+    organizerConsoleTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "organizer-console.html",
+    ),
+    organizerManageTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "organizer-manage.html",
+    ),
+    organizerReservationsTemplatePath:
+      configuredTemplatePathWithBundledFallback(
+        config,
+        "organizer-reservations.html",
+      ),
+    organizerReservationTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "organizer-reservation.html",
+    ),
+    operatorReservationsTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "operator-reservations.html",
+    ),
+    operatorReservationTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "operator-reservation.html",
+    ),
+    operatorChangesTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "operator-changes.html",
+    ),
+    operatorChangeTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "operator-change.html",
+    ),
+    operatorHistoricalImportsTemplatePath:
+      configuredTemplatePathWithBundledFallback(
+        config,
+        "operator-historical-imports.html",
+      ),
+    eventTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "event.html",
+    ),
+    organizerEventTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "organizer-event.html",
+    ),
+    organizerEventAuditTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "organizer-event-audit.html",
+    ),
+    publishedCanvasTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "published-canvas.html",
+    ),
+    htmlHeadSnippet,
+  });
   return {
     config,
+    initialize: hostedEventModule.initialize,
+    close: hostedEventModule.close,
     fileserver,
     errorPage: errorTemplate,
     boardTemplate,
     indexTemplate,
     rulesTemplate,
     manifestTemplate,
+    hostedEventModule,
   };
 }
 

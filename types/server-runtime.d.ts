@@ -19,12 +19,132 @@ export type StaticFileServer = (
 
 export type ServerRuntime = {
   config: ServerConfig;
+  initialize?: () => Promise<void>;
+  close?: () => Promise<void>;
   fileserver: StaticFileServer;
   errorPage: import("../server/http/templating.mjs").Template;
   boardTemplate: import("../server/http/templating.mjs").BoardTemplate;
   indexTemplate: import("../server/http/templating.mjs").Template;
   rulesTemplate: import("../server/http/templating.mjs").RulesTemplate;
   manifestTemplate: import("../server/http/templating.mjs").Template;
+  hostedEventModule: HostedEventModule;
+};
+
+/**
+ * The admission verdict for one attempt to reach an event Board Session, by
+ * socket handshake or board page load. `role` maps onto board permission
+ * roles: moderator (Owner/Admin, Preparation Window capable),
+ * event_moderator (per-event realtime governance grant, Preparation Window
+ * capable, no Clear), editor (member holding the account's single writable
+ * connection), reader (explicit read-only).
+ */
+export type HostedBoardAdmission = ReturnType<
+  typeof import("../server/hosted_event/admission/index.mjs").createEventAdmission
+>;
+
+/**
+ * The event-scoped governance surface composed onto the Hosted Event Module
+ * by `createEventModeration`.
+ */
+export type HostedEventModeration = ReturnType<
+  typeof import("../server/hosted_event/moderation/index.mjs").createEventModeration
+>;
+
+export type HostedEventModule = {
+  enabled: boolean;
+  initialize: () => Promise<void>;
+  close: () => Promise<void>;
+  serveHome: HttpRouteHandler;
+  serveSource: HttpRouteHandler;
+  serveRegister: HttpRouteHandler;
+  serveLogin: HttpRouteHandler;
+  serveVerify: HttpRouteHandler;
+  serveLogout: HttpRouteHandler;
+  serveForgot: HttpRouteHandler;
+  serveReset: HttpRouteHandler;
+  serveAccount: HttpRouteHandler;
+  serveAccountPassword: HttpRouteHandler;
+  serveAccountDelete: HttpRouteHandler;
+  serveAccountSessionRevoke: HttpRouteHandler;
+  serveAccountSessionsRevokeOthers: HttpRouteHandler;
+  serveOrganizerApply: HttpRouteHandler;
+  serveOperatorConsole: HttpRouteHandler;
+  serveOperatorArchiveRetry: HttpRouteHandler;
+  serveOperatorOutcomePurgeRetry: HttpRouteHandler;
+  serveOperatorHistoricalImports: HttpRouteHandler;
+  serveOperatorApplication: HttpRouteHandler;
+  serveOperatorApproveApplication: HttpRouteHandler;
+  serveOperatorRejectApplication: HttpRouteHandler;
+  serveOrganizerConsole: HttpRouteHandler;
+  serveOrganizerInvitationAccept: HttpRouteHandler;
+  serveOrganizerInvitationDecline: HttpRouteHandler;
+  serveOrganizerManage: HttpRouteHandler;
+  serveOrganizerInvite: HttpRouteHandler;
+  serveOrganizerInvitationRevoke: HttpRouteHandler;
+  serveOrganizerMemberRole: HttpRouteHandler;
+  serveOrganizerMemberRemove: HttpRouteHandler;
+  serveOrganizerReservations: HttpRouteHandler;
+  serveOrganizerReservation: HttpRouteHandler;
+  serveSubmitReservation: HttpRouteHandler;
+  serveCancelReservation: HttpRouteHandler;
+  serveSubmitChangeRequest: HttpRouteHandler;
+  serveOperatorReservations: HttpRouteHandler;
+  serveOperatorReservation: HttpRouteHandler;
+  serveOperatorApproveReservation: HttpRouteHandler;
+  serveOperatorRejectReservation: HttpRouteHandler;
+  serveOperatorChanges: HttpRouteHandler;
+  serveOperatorChange: HttpRouteHandler;
+  serveOperatorApproveChange: HttpRouteHandler;
+  serveOperatorRejectChange: HttpRouteHandler;
+  serveEventPage: HttpRouteHandler;
+  serveEventEnter: HttpRouteHandler;
+  serveEventAnonymity: HttpRouteHandler;
+  refreshEventLifecycle: () => Promise<void>;
+  runDueNoticeSends: (input?: {
+    now?: number;
+  }) => Promise<{ sent: number; failed: number }>;
+  registerBoardCloseEffects: (effects: {
+    notifyBoardClosed: (boardName: string) => Promise<void>;
+  }) => void;
+  admitEventBoardSocket: HostedBoardAdmission["admitEventBoardSocket"];
+  admitEventBoardPage: HostedBoardAdmission["admitEventBoardPage"];
+  noteEventSocketConnected: HostedBoardAdmission["noteEventSocketConnected"];
+  releaseEventSocket: HostedBoardAdmission["releaseEventSocket"];
+  revalidateSocketWrite: HostedBoardAdmission["revalidateSocketWrite"];
+  recordEventReport: HostedEventModeration["recordEventReport"];
+  applyModeration: HostedEventModeration["applyModeration"];
+  recordEntryLockChange: HostedEventModeration["recordEntryLockChange"];
+  recordClear: HostedEventModeration["recordClear"];
+  eventBanSummaries: HostedEventModeration["eventBanSummaries"];
+  listEventModeration: HostedEventModeration["listEventModeration"];
+  hasEventGovernanceRole: HostedEventModeration["hasEventGovernanceRole"];
+  serveBrandAsset: HttpRouteHandler;
+  serveOrganizerEvent: HttpRouteHandler;
+  serveOrganizerEventAccessCode: HttpRouteHandler;
+  serveOrganizerEventEntryLock: HttpRouteHandler;
+  serveOrganizerEventModerators: HttpRouteHandler;
+  serveOrganizerEventModeratorRevoke: HttpRouteHandler;
+  serveOrganizerEventCover: HttpRouteHandler;
+  serveOrganizerEventPublication: HttpRouteHandler;
+  serveOrganizerEventPublicationRevoke: HttpRouteHandler;
+  serveOrganizerEventOutcomeDelete: HttpRouteHandler;
+  serveOrganizerEventOutcomeRestore: HttpRouteHandler;
+  serveOrganizerEventAudit: HttpRouteHandler;
+  servePublishedCanvas: HttpRouteHandler;
+  serveOrganizerEventExports: HttpRouteHandler;
+  serveOrganizerEventExportDownload: HttpRouteHandler;
+  serveOrganizerEventExportRevoke: HttpRouteHandler;
+  serveOrganizerEventExportDelete: HttpRouteHandler;
+  serveOrganizerCredentialCreate: HttpRouteHandler;
+  serveOrganizerCredentialRotate: HttpRouteHandler;
+  serveOrganizerCredentialRevoke: HttpRouteHandler;
+  serveOrganizerWebhookCreate: HttpRouteHandler;
+  serveOrganizerWebhookRotate: HttpRouteHandler;
+  serveOrganizerWebhookRevoke: HttpRouteHandler;
+  serveOrganizerWebhookResume: HttpRouteHandler;
+  serveEventEntryGrantRedeem: HttpRouteHandler;
+  serveIntegrationApiEvent: HttpRouteHandler;
+  serveIntegrationApiEntryGrantCreate: HttpRouteHandler;
 };
 
 export type ObservedHttpRequest = {
@@ -46,6 +166,22 @@ export type HttpRouteContext<
   publicUrl: URL;
   url: URL;
   params: Params;
+  /**
+   * Board permission role pre-verified by hosted admission; routes that
+   * delegate to the legacy board renderer pin it here so the renderer's
+   * capability queries honor it without re-checking hosted rules.
+   */
+  hostedBoardRole?:
+    | "moderator"
+    | "event_moderator"
+    | "editor"
+    | "reader"
+    | null;
+  /**
+   * Hosted Event board pages pin the event page path here so the board
+   * shell can route terminal admission refusals back to the event page.
+   */
+  hostedEventPath?: string;
 };
 
 export type HttpRouteHandler<
@@ -59,7 +195,11 @@ export type HttpRequestHandler = (context: {
 }) => void;
 
 export type SocketServerModule = {
-  start: (app: import("http").Server, config: ServerConfig) => Promise<unknown>;
+  start: (
+    app: import("http").Server,
+    config: ServerConfig,
+    runtime: ServerRuntime,
+  ) => Promise<unknown>;
   shutdown?: () => Promise<void>;
 };
 
@@ -103,6 +243,22 @@ export type SocketBoardPermissionContext = {
 export type AppSocket = import("socket.io").Socket & {
   boardName?: string;
   boardPermissionContext?: SocketBoardPermissionContext;
+  hostedEventModule?: HostedEventModule;
+  /** Admission verdict pinned by the hosted socket gate; sockets only. */
+  hostedEventAdmission?: {
+    role: "moderator" | "event_moderator" | "editor" | "reader";
+    accountId: string;
+    eventId: string;
+    publicId: string;
+    boardName: string;
+    /** Opaque, event-scoped creator identity for items this account creates. */
+    participantId: string;
+    boardSessionId: string;
+    seats: number;
+    socketId?: string;
+  };
+  /** Board permission role granted by hosted admission, when admitted. */
+  hostedBoardRole?: "moderator" | "event_moderator" | "editor" | "reader";
   replayBootstrap?: unknown;
   turnstileValidatedUntil?: number;
   client: { request: SocketRequest };

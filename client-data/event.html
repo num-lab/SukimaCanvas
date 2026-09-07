@@ -1,0 +1,123 @@
+{{#> hosted-layout
+  pageTitle=hostedEventName
+  noIndex=true
+  workspaceNavigation=true
+  pageScript="hosted-entry-grant.js"
+}}
+    <main class="hosted-main hosted-account-main">
+      <article class="hosted-event-page" aria-labelledby="hosted-event-title">
+        {{#if hostedEventCoverHref}}
+        <img
+          class="hosted-event-cover"
+          src="{{hostedEventCoverHref}}"
+          alt="{{hostedTranslations.hosted_event_cover_alt}}"
+        />
+        {{/if}}
+        <p class="hosted-organizer-status-badge">{{hostedEventStatusLabel}}</p>
+        <h1 id="hosted-event-title">{{hostedEventName}}</h1>
+        <p class="hosted-event-organizer">
+          {{hostedTranslations.hosted_event_hosted_by}} {{hostedEventOrganizerName}}
+        </p>
+        {{#if hostedEventTagline}}
+        <p class="hosted-event-tagline">{{hostedEventTagline}}</p>
+        {{/if}}
+        <dl class="hosted-operator-detail">
+          <dt>{{hostedTranslations.hosted_event_starts_label}}</dt>
+          <dd>{{hostedEventStartsAt}}</dd>
+          <dt>{{hostedTranslations.hosted_event_ends_label}}</dt>
+          <dd>{{hostedEventEndsAt}}</dd>
+        </dl>
+        {{#if hostedEventCancelled}}
+        <p class="hosted-form-error" role="status">{{hostedTranslations.hosted_event_cancelled_note}}</p>
+        {{else if hostedEventEnded}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_event_ended_note}}</p>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_event_access_note}}</p>
+        {{/if}}
+
+        {{#if hostedEventEnterError}}
+        <p class="hosted-form-error" role="alert">{{hostedEventEnterError}}</p>
+        {{/if}}
+        {{#if hostedEventEnterNotice}}
+        <p class="hosted-form-success" role="status">{{hostedEventEnterNotice}}</p>
+        {{/if}}
+
+        {{#if hostedEventMember}}
+        <div class="hosted-event-membership" role="status">
+          <p class="hosted-form-success">{{hostedTranslations.hosted_event_membership_active}}</p>
+          {{#if hostedEventBoardHref}}
+          <p class="hosted-event-board-entry">
+            <a class="hosted-primary-link" href="{{hostedEventBoardHref}}">{{hostedTranslations.hosted_event_board_link}}</a>
+          </p>
+          {{/if}}
+          {{#if hostedEventAnonymityChangeable}}
+          {{#if hostedEventMemberAnonymous}}
+          <p class="hosted-account-note">{{hostedTranslations.hosted_event_anonymity_anonymous_note}}</p>
+          {{else}}
+          <form method="post" action="events/{{hostedEventPublicId}}/anonymity" class="hosted-event-anonymity">
+            <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+            <p class="hosted-account-note">{{hostedTranslations.hosted_event_anonymity_note}}</p>
+            <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_event_anonymity_go_anonymous}}</button>
+          </form>
+          {{/if}}
+          {{else}}
+          <p class="hosted-form-hint">{{hostedTranslations.hosted_event_anonymity_frozen_note}}</p>
+          {{/if}}
+        </div>
+        {{else if hostedEventEnterForm}}
+        <form method="post" action="events/{{hostedEventPublicId}}/enter" class="hosted-event-enter">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-event-access-code">{{hostedTranslations.hosted_event_access_code_label}}</label>
+            <input
+              type="text"
+              id="hosted-event-access-code"
+              name="accessCode"
+              required
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <p class="hosted-form-hint">{{hostedTranslations.hosted_event_access_code_hint}}</p>
+          </div>
+          <fieldset class="hosted-form-field">
+            <legend>{{hostedTranslations.hosted_event_anonymity_label}}</legend>
+            <div class="hosted-form-checkbox">
+              <input type="radio" id="hosted-event-anonymity-identified" name="anonymity" value="identified" checked />
+              <label for="hosted-event-anonymity-identified">{{hostedTranslations.hosted_event_anonymity_identified}}</label>
+            </div>
+            <div class="hosted-form-checkbox">
+              <input type="radio" id="hosted-event-anonymity-anonymous" name="anonymity" value="anonymous" />
+              <label for="hosted-event-anonymity-anonymous">{{hostedTranslations.hosted_event_anonymity_anonymous}}</label>
+            </div>
+            <p class="hosted-form-hint">{{hostedTranslations.hosted_event_anonymity_hint}}</p>
+          </fieldset>
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_event_enter}}</button>
+        </form>
+        {{else if hostedEventLoginPrompt}}
+        <p class="hosted-account-alt">
+          <a href="login">{{hostedTranslations.hosted_event_login_to_enter}}</a>
+        </p>
+        {{/if}}
+
+        {{#if hostedEventOwnerBoardLink}}
+        <p class="hosted-account-alt">
+          <a class="hosted-primary-link" href="{{hostedEventOwnerBoardLink}}">{{hostedTranslations.hosted_event_board_link}}</a>
+        </p>
+        {{/if}}
+
+        {{#if hostedEventPublishedCanvasHref}}
+        <p class="hosted-event-published-link">
+          <a class="hosted-primary-link" href="{{hostedEventPublishedCanvasHref}}">{{hostedTranslations.hosted_publication_view_link}}</a>
+        </p>
+        {{/if}}
+      </article>
+
+      <div
+        id="hosted-entry-grant"
+        data-event-public-id="{{hostedEventPublicId}}"
+        data-signed-in="{{#if hostedEventSignedIn}}1{{else}}0{{/if}}"
+        data-csrf="{{csrfToken}}"
+        hidden
+      ></div>
+    </main>
+{{/hosted-layout}}

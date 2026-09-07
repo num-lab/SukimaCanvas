@@ -1,0 +1,231 @@
+{{#> hosted-layout
+  pageTitle=hostedOrganizerName
+  canonical=true
+  workspaceNavigation=true
+}}
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-organizer-manage-title">
+        <h1 id="hosted-organizer-manage-title">{{hostedOrganizerName}}</h1>
+        <p class="hosted-account-note">
+          {{hostedTranslations.hosted_org_your_role}}: {{hostedOrganizerRoleLabel}}
+        </p>
+        <p class="hosted-account-alt">
+          <a href="organizer">{{hostedTranslations.hosted_org_back_to_console}}</a>
+          <a href="organizers/{{hostedOrganizerId}}/reservations">{{hostedTranslations.hosted_reservations_title}}</a>
+        </p>
+
+        {{#if hostedOrganizerManageError}}
+        <p class="hosted-form-error" role="alert">{{hostedOrganizerManageError}}</p>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_organizer_members_title}}</h2>
+        <ul class="hosted-member-list">
+          {{#hostedOrganizerMembers}}
+          <li class="hosted-member-item">
+            <div class="hosted-member-meta">
+              <span class="hosted-member-email">{{email}}</span>
+              <span class="hosted-member-role">{{roleLabel}}</span>
+            </div>
+            {{#if ../hostedOrganizerIsOwner}}
+            <div class="hosted-member-actions">
+              <form method="post" action="organizers/{{../hostedOrganizerId}}/members/{{accountId}}/role">
+                <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+                <input type="hidden" name="role" value="{{toggleRole}}" />
+                <button type="submit" class="hosted-submit hosted-submit-small">{{toggleLabel}}</button>
+              </form>
+              <form method="post" action="organizers/{{../hostedOrganizerId}}/members/{{accountId}}/remove">
+                <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+                <button type="submit" class="hosted-submit hosted-submit-small hosted-submit-danger">{{../hostedTranslations.hosted_org_member_remove}}</button>
+              </form>
+            </div>
+            {{/if}}
+          </li>
+          {{/hostedOrganizerMembers}}
+        </ul>
+
+        {{#if hostedOrganizerIsOwner}}
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_org_invite_title}}</h2>
+        <form method="post" action="organizers/{{hostedOrganizerId}}/invitations" novalidate>
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-org-invite-email">{{hostedTranslations.hosted_org_invite_email_label}}</label>
+            <input
+              type="email"
+              id="hosted-org-invite-email"
+              name="email"
+              required
+              maxlength="254"
+              autocomplete="off"
+            />
+          </div>
+          <div class="hosted-form-field">
+            <label for="hosted-org-invite-role">{{hostedTranslations.hosted_org_invite_role_label}}</label>
+            <select id="hosted-org-invite-role" name="role">
+              <option value="admin">{{hostedTranslations.hosted_role_admin}}</option>
+              <option value="owner">{{hostedTranslations.hosted_role_owner}}</option>
+            </select>
+          </div>
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_org_invite_submit}}</button>
+        </form>
+
+        {{#if hostedOrganizerHasInvites}}
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_org_pending_invites_title}}</h2>
+        <ul class="hosted-member-list">
+          {{#hostedOrganizerInvites}}
+          <li class="hosted-member-item">
+            <div class="hosted-member-meta">
+              <span class="hosted-member-email">{{email}}</span>
+              <span class="hosted-member-role">{{roleLabel}}</span>
+              <span class="hosted-form-hint">{{../hostedTranslations.hosted_org_invite_expires}}: {{expiresAt}}</span>
+            </div>
+            <div class="hosted-member-actions">
+              <form method="post" action="organizers/{{../hostedOrganizerId}}/invitations/{{invitationId}}/revoke">
+                <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+                <button type="submit" class="hosted-submit hosted-submit-small">{{../hostedTranslations.hosted_org_invite_revoke}}</button>
+              </form>
+            </div>
+          </li>
+          {{/hostedOrganizerInvites}}
+        </ul>
+        {{/if}}
+
+        {{#if hostedOrganizerCredentialReveal}}
+        <p class="hosted-form-success" role="status">
+          {{hostedTranslations.hosted_org_credentials_reveal}}
+          <code class="hosted-credential-secret-value">{{hostedOrganizerCredentialReveal}}</code>
+        </p>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_org_credentials_reveal_hint}}</p>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_org_credentials_title}}</h2>
+        <p class="hosted-account-note">{{hostedTranslations.hosted_org_credentials_note}}</p>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_org_credentials_api_hint}}</p>
+        {{#if hostedOrganizerHasCredentials}}
+        <ul class="hosted-member-list">
+          {{#hostedOrganizerCredentials}}
+          <li class="hosted-member-item">
+            <div class="hosted-member-meta">
+              <span class="hosted-credential-id">{{credentialId}}</span>
+              <span class="hosted-member-role">
+                {{#if isActive}}{{../hostedTranslations.hosted_org_credentials_status_active}}{{/if}}
+                {{#if isRevoked}}{{../hostedTranslations.hosted_org_credentials_status_revoked}}{{/if}}
+              </span>
+            </div>
+            <div class="hosted-member-meta hosted-form-hint">
+              <span>{{../hostedTranslations.hosted_org_credentials_created_label}}: {{createdAt}}</span>
+              {{#if rotatedAt}}<span>{{../hostedTranslations.hosted_org_credentials_rotated_label}}: {{rotatedAt}}</span>{{/if}}
+              {{#if revokedAt}}<span>{{../hostedTranslations.hosted_org_credentials_revoked_label}}: {{revokedAt}}</span>{{/if}}
+            </div>
+            {{#if isActive}}
+            <div class="hosted-member-actions">
+              <form method="post" action="organizers/{{../hostedOrganizerId}}/credentials/{{credentialId}}/rotate">
+                <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+                <button type="submit" class="hosted-submit hosted-submit-small">{{../hostedTranslations.hosted_org_credentials_rotate}}</button>
+              </form>
+              <form method="post" action="organizers/{{../hostedOrganizerId}}/credentials/{{credentialId}}/revoke">
+                <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+                <button type="submit" class="hosted-submit hosted-submit-small hosted-submit-danger">{{../hostedTranslations.hosted_org_credentials_revoke}}</button>
+              </form>
+            </div>
+            {{/if}}
+          </li>
+          {{/hostedOrganizerCredentials}}
+        </ul>
+        {{else}}
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_org_credentials_empty}}</p>
+        {{/if}}
+        <form method="post" action="organizers/{{hostedOrganizerId}}/credentials" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_org_credentials_create}}</button>
+        </form>
+
+        {{#if hostedOrganizerWebhookReveal}}
+        <p class="hosted-form-success" role="status">
+          {{hostedTranslations.hosted_org_webhook_reveal}}
+          <code class="hosted-credential-secret-value">{{hostedOrganizerWebhookReveal}}</code>
+        </p>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_org_webhook_reveal_hint}}</p>
+        {{/if}}
+        {{#if hostedOrganizerWebhookResumed}}
+        <p class="hosted-form-success" role="status">{{hostedOrganizerWebhookResumed}}</p>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_org_webhook_title}}</h2>
+        <p class="hosted-account-note">{{hostedTranslations.hosted_org_webhook_note}}</p>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_org_webhook_events_hint}}</p>
+        {{#if hostedOrganizerHasWebhooks}}
+        <ul class="hosted-member-list">
+          {{#hostedOrganizerWebhooks}}
+          <li class="hosted-member-item">
+            <div class="hosted-member-meta">
+              <span class="hosted-credential-id">{{url}}</span>
+              <span class="hosted-member-role">
+                {{#if isActive}}{{../hostedTranslations.hosted_org_webhook_status_active}}{{/if}}
+                {{#if isSuspended}}{{../hostedTranslations.hosted_org_webhook_status_suspended}}{{/if}}
+                {{#if isRevoked}}{{../hostedTranslations.hosted_org_webhook_status_revoked}}{{/if}}
+              </span>
+            </div>
+            <div class="hosted-member-meta hosted-form-hint">
+              <span>{{../hostedTranslations.hosted_org_webhook_created_label}}: {{createdAt}}</span>
+              {{#if rotatedAt}}<span>{{../hostedTranslations.hosted_org_webhook_rotated_label}}: {{rotatedAt}}</span>{{/if}}
+              {{#if suspendedAt}}<span>{{../hostedTranslations.hosted_org_webhook_suspended_label}}: {{suspendedAt}}</span>{{/if}}
+              {{#if revokedAt}}<span>{{../hostedTranslations.hosted_org_webhook_revoked_label}}: {{revokedAt}}</span>{{/if}}
+            </div>
+            {{#if isActive}}
+            <div class="hosted-member-actions">
+              <form method="post" action="organizers/{{../hostedOrganizerId}}/webhooks/{{subscriptionId}}/rotate">
+                <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+                <button type="submit" class="hosted-submit hosted-submit-small">{{../hostedTranslations.hosted_org_webhook_rotate}}</button>
+              </form>
+              <form method="post" action="organizers/{{../hostedOrganizerId}}/webhooks/{{subscriptionId}}/revoke">
+                <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+                <button type="submit" class="hosted-submit hosted-submit-small hosted-submit-danger">{{../hostedTranslations.hosted_org_webhook_revoke}}</button>
+              </form>
+            </div>
+            {{/if}}
+            {{#if isSuspended}}
+            <div class="hosted-member-actions">
+              <form method="post" action="organizers/{{../hostedOrganizerId}}/webhooks/{{subscriptionId}}/resume">
+                <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+                <button type="submit" class="hosted-submit hosted-submit-small">{{../hostedTranslations.hosted_org_webhook_resume}}</button>
+              </form>
+            </div>
+            <p class="hosted-form-hint">{{../hostedTranslations.hosted_org_webhook_resume_hint}}</p>
+            {{/if}}
+          </li>
+          {{/hostedOrganizerWebhooks}}
+        </ul>
+        {{else}}
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_org_webhook_empty}}</p>
+        {{/if}}
+        <form method="post" action="organizers/{{hostedOrganizerId}}/webhooks" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-organizer-webhook-url">{{hostedTranslations.hosted_org_webhook_url_label}}</label>
+            <input
+              type="url"
+              id="hosted-organizer-webhook-url"
+              name="url"
+              required
+              maxlength="2048"
+              placeholder="https://"
+            />
+            <p class="hosted-form-hint">{{hostedTranslations.hosted_org_webhook_url_hint}}</p>
+          </div>
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_org_webhook_create}}</button>
+        </form>
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_operator_audit_title}}</h2>
+        <ul class="hosted-operator-audit">
+          {{#hostedOrganizerAudit}}
+          <li class="hosted-operator-audit-item">
+            <span class="hosted-operator-audit-action">{{action}}</span>
+            <span class="hosted-operator-audit-actor">{{actorEmail}}</span>
+            <span class="hosted-operator-audit-at">{{at}}</span>
+          </li>
+          {{/hostedOrganizerAudit}}
+        </ul>
+        {{/if}}
+      </section>
+    </main>
+{{/hosted-layout}}

@@ -12,7 +12,7 @@ const benchmarkScript = path.join(repoRoot, "scripts/benchmark-server.mjs");
 const requestedScenario = (process.argv[2] || "all").toLowerCase();
 const scenarios =
   requestedScenario === "all"
-    ? ["e2e", "load", "persist", "broadcast"]
+    ? ["e2e", "load", "persist", "broadcast", "archive", "export"]
     : [requestedScenario];
 const benchmarkTimeoutMs = process.env.WBO_BENCH_TIMEOUT_MS ?? "600000";
 

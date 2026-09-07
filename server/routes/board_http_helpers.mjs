@@ -198,7 +198,13 @@ function boardPermissionsForRequest(ctx, boardName) {
   return BoardPermissions.forBoard({
     config,
     boardName,
-    userInfo: { token: ctx.url.searchParams.get("token"), userSecret },
+    userInfo: {
+      token: ctx.url.searchParams.get("token"),
+      userSecret,
+      // Pinned by hosted admission when a hosted route delegates to a legacy
+      // board renderer; hosted boards never consult JWTs.
+      hostedRole: ctx.hostedBoardRole || null,
+    },
     // Render the served board state ban-aware too, so a banned user's HTML
     // (board-state script + toolbar) is read-only from first paint, matching
     // the socket, and carries the same one-shot access refresh delay.

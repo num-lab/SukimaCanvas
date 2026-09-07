@@ -1,0 +1,136 @@
+{{#> hosted-layout
+  pageTitle=hostedReservationName
+  canonical=true
+  workspaceNavigation=true
+}}
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-reservation-title">
+        <h1 id="hosted-reservation-title">{{hostedReservationName}}</h1>
+        <p class="hosted-organizer-status-badge">{{hostedReservationStatusLabel}}</p>
+        <p class="hosted-account-alt">
+          <a href="organizers/{{hostedOrganizerId}}/reservations">{{hostedTranslations.hosted_reservations_back}}</a>
+        </p>
+
+        {{#if hostedReservationError}}
+        <p class="hosted-form-error" role="alert">{{hostedReservationError}}</p>
+        {{/if}}
+
+        {{#if hostedReservationIsDraft}}
+        <form method="post" action="organizers/{{hostedOrganizerId}}/reservations/{{hostedReservationId}}" novalidate>
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-reservation-name">{{hostedTranslations.hosted_reservation_name_label}}</label>
+            <input type="text" id="hosted-reservation-name" name="eventName" value="{{hostedReservationName}}" required maxlength="120" />
+          </div>
+          <div class="hosted-form-field">
+            <label for="hosted-reservation-start">{{hostedTranslations.hosted_reservation_start_label}}</label>
+            <input type="datetime-local" id="hosted-reservation-start" name="startsAt" value="{{hostedReservationStartValue}}" required />
+          </div>
+          <div class="hosted-form-field">
+            <label for="hosted-reservation-end">{{hostedTranslations.hosted_reservation_end_label}}</label>
+            <input type="datetime-local" id="hosted-reservation-end" name="endsAt" value="{{hostedReservationEndValue}}" required />
+          </div>
+          <div class="hosted-form-field">
+            <label for="hosted-reservation-seats">{{hostedTranslations.hosted_reservation_seats_label}}</label>
+            <input type="number" id="hosted-reservation-seats" name="requestedSeats" value="{{hostedReservationSeats}}" min="1" max="{{hostedReservationSeatMax}}" required />
+          </div>
+          <div class="hosted-form-field">
+            <label for="hosted-reservation-visibility">{{hostedTranslations.hosted_reservation_visibility_label}}</label>
+            <select id="hosted-reservation-visibility" name="visibility">
+              <option value="unlisted" {{#unless hostedReservationVisibilityPublic}}selected{{/unless}}>{{hostedTranslations.hosted_reservation_visibility_unlisted}}</option>
+              <option value="public" {{#if hostedReservationVisibilityPublic}}selected{{/if}}>{{hostedTranslations.hosted_reservation_visibility_public}}</option>
+            </select>
+          </div>
+          <div class="hosted-form-field">
+            <label for="hosted-reservation-description">{{hostedTranslations.hosted_reservation_description_label}}</label>
+            <textarea id="hosted-reservation-description" name="description" rows="4" maxlength="2000">{{hostedReservationDescription}}</textarea>
+          </div>
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_reservation_save}}</button>
+        </form>
+        <form method="post" action="organizers/{{hostedOrganizerId}}/reservations/{{hostedReservationId}}/submit" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_reservation_submit}}</button>
+        </form>
+        {{else}}
+        <dl class="hosted-operator-detail">
+          <dt>{{hostedTranslations.hosted_reservation_start_label}}</dt>
+          <dd>{{hostedReservationStartAt}}</dd>
+          <dt>{{hostedTranslations.hosted_reservation_end_label}}</dt>
+          <dd>{{hostedReservationEndAt}}</dd>
+          <dt>{{hostedTranslations.hosted_reservation_seats_label}}</dt>
+          <dd>{{hostedReservationSeats}}</dd>
+          <dt>{{hostedTranslations.hosted_reservation_visibility_label}}</dt>
+          <dd>{{hostedReservationVisibilityLabel}}</dd>
+          {{#if hostedReservationDescription}}
+          <dt>{{hostedTranslations.hosted_reservation_description_label}}</dt>
+          <dd>{{hostedReservationDescription}}</dd>
+          {{/if}}
+        </dl>
+        {{#if hostedReservationIsSubmitted}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_reservation_pending_note}}</p>
+        {{/if}}
+        {{#if hostedReservationIsApproved}}
+        <p class="hosted-form-success" role="status">{{hostedTranslations.hosted_reservation_approved_note}}</p>
+        {{#if hostedReservationLifecycleLabel}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_session_status_label}}: {{hostedReservationLifecycleLabel}}</p>
+        {{/if}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_reservation_public_link}}: <code>{{hostedReservationEventPublicPath}}</code></p>
+        {{#if hostedReservationEventManagePath}}
+        <p class="hosted-account-alt">
+          <a class="hosted-primary-link" href="{{hostedReservationEventManagePath}}">{{hostedTranslations.hosted_event_manage_link}}</a>
+        </p>
+        {{/if}}
+
+        {{#if hostedReservationPendingChange}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_change_pending_note}}: {{hostedReservationPendingChange.summary}} ({{hostedReservationPendingChange.statusLabel}})</p>
+        {{/if}}
+        {{#if hostedReservationCanRequestChange}}
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_change_request_title}}</h2>
+        <p class="hosted-form-hint">{{hostedTranslations.hosted_change_request_intro}}</p>
+        <form method="post" action="organizers/{{hostedOrganizerId}}/reservations/{{hostedReservationId}}/change" novalidate>
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <div class="hosted-form-field">
+            <label for="hosted-change-start">{{hostedTranslations.hosted_reservation_start_label}}</label>
+            <input type="datetime-local" id="hosted-change-start" name="startsAt" value="{{hostedReservationStartValue}}" required />
+          </div>
+          <div class="hosted-form-field">
+            <label for="hosted-change-end">{{hostedTranslations.hosted_reservation_end_label}}</label>
+            <input type="datetime-local" id="hosted-change-end" name="endsAt" value="{{hostedReservationEndValue}}" required />
+          </div>
+          <div class="hosted-form-field">
+            <label for="hosted-change-seats">{{hostedTranslations.hosted_reservation_seats_label}}</label>
+            <input type="number" id="hosted-change-seats" name="requestedSeats" value="{{hostedReservationSeats}}" min="1" max="{{hostedReservationSeatMax}}" required />
+          </div>
+          <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_change_request_submit}}</button>
+        </form>
+        {{/if}}
+        {{/if}}
+        {{#if hostedReservationIsRejected}}
+        <p class="hosted-form-error" role="status">{{hostedTranslations.hosted_reservation_rejected_note}}</p>
+        {{/if}}
+        {{/if}}
+
+        {{#if hostedReservationCancellable}}
+        <form method="post" action="organizers/{{hostedOrganizerId}}/reservations/{{hostedReservationId}}/cancel" class="hosted-reservation-action">
+          <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+          <button type="submit" class="hosted-submit hosted-submit-danger">{{hostedTranslations.hosted_reservation_cancel}}</button>
+        </form>
+        {{/if}}
+
+        {{#if hostedReservationHasChangeHistory}}
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_change_history_title}}</h2>
+        <ul class="hosted-organizer-queue">
+          {{#hostedReservationChangeHistory}}
+          <li class="hosted-organizer-queue-item">
+            <div class="hosted-organizer-queue-meta">
+              <span class="hosted-organizer-queue-name">{{kindLabel}} · {{statusLabel}}</span>
+              {{#if proposedSummary}}<span>{{proposedSummary}}</span>{{/if}}
+              <span>{{createdAt}}</span>
+            </div>
+          </li>
+          {{/hostedReservationChangeHistory}}
+        </ul>
+        {{/if}}
+      </section>
+    </main>
+{{/hosted-layout}}

@@ -772,6 +772,9 @@ export function createToolRuntimeModules(mountedTools, ownerToolName = "") {
         return mountedTools.access.canEdit;
       },
     },
+    // Hosted Event boards only; tools use it to apply hosted-only flows
+    // (for example the Clear reason prompt). Undefined on legacy boards.
+    hostedEventPath: mountedTools.hostedEventPath,
   };
 }
 

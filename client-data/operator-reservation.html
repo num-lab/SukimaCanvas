@@ -1,0 +1,67 @@
+{{#> hosted-layout
+  pageTitle=hostedTranslations.hosted_operator_reservation_title
+  canonical=true
+  workspaceNavigation=true
+}}
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-operator-reservation-title">
+        <h1 id="hosted-operator-reservation-title">{{hostedTranslations.hosted_operator_reservation_title}}</h1>
+        <p class="hosted-account-alt">
+          <a href="operator/reservations">{{hostedTranslations.hosted_operator_reservations_back}}</a>
+        </p>
+
+        {{#if hostedOperatorReservationNotice}}
+        <p class="hosted-form-error" role="alert">{{hostedOperatorReservationNotice}}</p>
+        {{/if}}
+
+        <dl class="hosted-operator-detail">
+          <dt>{{hostedTranslations.hosted_reservation_name_label}}</dt>
+          <dd>{{hostedReservationName}}</dd>
+          <dt>{{hostedTranslations.hosted_operator_reservation_organizer}}</dt>
+          <dd>{{hostedReservationOrganizerName}}</dd>
+          <dt>{{hostedTranslations.hosted_reservation_start_label}}</dt>
+          <dd>{{hostedReservationStartAt}}</dd>
+          <dt>{{hostedTranslations.hosted_reservation_end_label}}</dt>
+          <dd>{{hostedReservationEndAt}}</dd>
+          <dt>{{hostedTranslations.hosted_reservation_seats_label}}</dt>
+          <dd>{{hostedReservationSeats}}</dd>
+          <dt>{{hostedTranslations.hosted_reservation_visibility_label}}</dt>
+          <dd>{{hostedReservationVisibilityLabel}}</dd>
+          {{#if hostedReservationDescription}}
+          <dt>{{hostedTranslations.hosted_reservation_description_label}}</dt>
+          <dd>{{hostedReservationDescription}}</dd>
+          {{/if}}
+          <dt>{{hostedTranslations.hosted_operator_status_label}}</dt>
+          <dd>{{hostedReservationStatusLabel}}</dd>
+        </dl>
+
+        {{#if hostedCapacity}}
+        <section class="hosted-capacity{{#if hostedCapacity.wouldExceed}} hosted-capacity-exceeded{{/if}}" aria-labelledby="hosted-capacity-title">
+          <h2 id="hosted-capacity-title" class="hosted-account-section-title">{{hostedTranslations.hosted_capacity_title}}</h2>
+          <p class="hosted-account-note">{{hostedTranslations.hosted_capacity_sessions}}: {{hostedCapacity.sessions}} / {{hostedCapacity.sessionLimit}}</p>
+          <p class="hosted-account-note">{{hostedTranslations.hosted_capacity_seats}}: {{hostedCapacity.seats}} / {{hostedCapacity.seatLimit}}</p>
+          {{#if hostedCapacity.wouldExceed}}
+          <p class="hosted-form-error" role="alert">{{hostedTranslations.hosted_capacity_exceeded}}</p>
+          {{/if}}
+        </section>
+        {{/if}}
+
+        {{#if hostedReservationIsSubmitted}}
+        <div class="hosted-operator-decision">
+          <form method="post" action="operator/reservations/{{hostedReservationId}}/approve">
+            <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+            <button type="submit" class="hosted-submit">{{hostedTranslations.hosted_operator_approve_submit}}</button>
+          </form>
+          <form method="post" action="operator/reservations/{{hostedReservationId}}/reject">
+            <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+            <div class="hosted-form-field">
+              <label for="hosted-operator-note">{{hostedTranslations.hosted_operator_note_label}}</label>
+              <textarea id="hosted-operator-note" name="note" rows="3" maxlength="2000"></textarea>
+            </div>
+            <button type="submit" class="hosted-submit hosted-submit-danger">{{hostedTranslations.hosted_operator_reject_submit}}</button>
+          </form>
+        </div>
+        {{/if}}
+      </section>
+    </main>
+{{/hosted-layout}}

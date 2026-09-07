@@ -1,0 +1,124 @@
+{{#> hosted-layout
+  pageTitle=hostedTranslations.hosted_operator_title
+  canonical=true
+  workspaceNavigation=true
+}}
+    <main class="hosted-main hosted-account-main">
+      <section class="hosted-account-card" aria-labelledby="hosted-operator-title">
+        <h1 id="hosted-operator-title">{{hostedTranslations.hosted_operator_title}}</h1>
+        {{#if hostedOperatorForbidden}}
+        <p class="hosted-form-error" role="alert">{{hostedOperatorForbidden}}</p>
+        {{else}}
+        <p class="hosted-account-intro">{{hostedTranslations.hosted_operator_intro}}</p>
+        <p class="hosted-account-alt">
+          <a href="operator/reservations">{{hostedTranslations.hosted_operator_reservations_title}}</a>
+          ·
+          <a href="operator/changes">{{hostedTranslations.hosted_operator_changes_title}}</a>
+          ·
+          <a href="operator/historical-imports">{{hostedTranslations.hosted_operator_history_link}}</a>
+        </p>
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_operator_queue_title}}</h2>
+        {{#if hostedOperatorHasPending}}
+        <ul class="hosted-operator-queue">
+          {{#hostedOperatorPending}}
+          <li class="hosted-operator-queue-item">
+            <div class="hosted-operator-queue-meta">
+              <span class="hosted-operator-queue-name">{{organizerName}}</span>
+              <span>{{../hostedTranslations.hosted_operator_queue_applicant}}: {{applicantEmail}}</span>
+              <span>{{../hostedTranslations.hosted_operator_queue_submitted}}: {{submittedAt}}</span>
+            </div>
+            <a class="hosted-primary-link" href="operator/applications/{{applicationId}}">{{../hostedTranslations.hosted_operator_queue_review}}</a>
+          </li>
+          {{/hostedOperatorPending}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_operator_queue_empty}}</p>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_operator_archive_failures_title}}</h2>
+        {{#if hostedOperatorHasArchiveFailures}}
+        <ul class="hosted-operator-queue">
+          {{#hostedOperatorArchiveFailures}}
+          <li class="hosted-operator-queue-item">
+            <div class="hosted-operator-queue-meta">
+              <span class="hosted-operator-queue-name">{{eventName}}</span>
+              <span>{{../hostedTranslations.hosted_operator_reservation_organizer}}: {{organizerName}}</span>
+              <span>{{../hostedTranslations.hosted_operator_archive_failures_reason}}: {{failureCode}}</span>
+              <span>{{../hostedTranslations.hosted_operator_archive_failures_attempts}}: {{failureAttempts}}</span>
+              <span>{{../hostedTranslations.hosted_operator_archive_failures_last_attempt}}: {{lastFailedAt}}</span>
+              {{#if failureMessage}}
+              <span>{{../hostedTranslations.hosted_operator_archive_failures_detail}}: {{failureMessage}}</span>
+              {{/if}}
+            </div>
+            <form method="post" action="operator/board-sessions/{{boardSessionId}}/archive-retry">
+              <input type="hidden" name="_csrf" value="{{csrfToken}}" />
+              <button type="submit" class="hosted-submit">{{../hostedTranslations.hosted_operator_archive_retry}}</button>
+            </form>
+          </li>
+          {{/hostedOperatorArchiveFailures}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_operator_archive_failures_empty}}</p>
+        {{/if}}
+        {{#if hostedOperatorArchiveNotice}}
+        <p class="hosted-account-note" role="status">{{hostedOperatorArchiveNotice}}</p>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_operator_outcome_purges_title}}</h2>
+        {{#if hostedOperatorHasOutcomePurges}}
+        <ul class="hosted-operator-queue">
+          {{#hostedOperatorOutcomePurges}}
+          <li class="hosted-operator-queue-item">
+            <div class="hosted-operator-queue-meta">
+              <span class="hosted-operator-queue-name">{{eventName}}</span>
+              <span>{{../hostedTranslations.hosted_operator_reservation_organizer}}: {{organizerName}}</span>
+              {{#if deletionPending}}
+              <span>{{../hostedTranslations.hosted_operator_outcome_purge_deadline}}: {{purgeAt}}</span>
+              {{/if}}
+              {{#if failureCode}}
+              <span>{{../hostedTranslations.hosted_operator_archive_failures_reason}}: {{failureCode}}</span>
+              <span>{{../hostedTranslations.hosted_operator_archive_failures_attempts}}: {{failureAttempts}}</span>
+              <span>{{../hostedTranslations.hosted_operator_archive_failures_last_attempt}}: {{lastFailedAt}}</span>
+              {{#if failureMessage}}
+              <span>{{../hostedTranslations.hosted_operator_archive_failures_detail}}: {{failureMessage}}</span>
+              {{/if}}
+              {{/if}}
+            </div>
+            {{#if failureCode}}
+            <form method="post" action="operator/events/{{eventId}}/outcome-purge-retry">
+              <input type="hidden" name="_csrf" value="{{../csrfToken}}" />
+              <button type="submit" class="hosted-submit">{{../hostedTranslations.hosted_operator_outcome_purge_retry}}</button>
+            </form>
+            {{/if}}
+          </li>
+          {{/hostedOperatorOutcomePurges}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_operator_outcome_purges_empty}}</p>
+        {{/if}}
+
+        <h2 class="hosted-account-section-title">{{hostedTranslations.hosted_operator_mail_retry_title}}</h2>
+        {{#if hostedOperatorHasNoticeRetries}}
+        <ul class="hosted-operator-queue">
+          {{#hostedOperatorNoticeRetries}}
+          <li class="hosted-operator-queue-item">
+            <div class="hosted-operator-queue-meta">
+              <span class="hosted-operator-queue-name">{{kindLabel}}</span>
+              <span>{{../hostedTranslations.hosted_operator_mail_retry_recipient}}: {{recipient}}</span>
+              <span>{{../hostedTranslations.hosted_operator_archive_failures_attempts}}: {{attempts}}</span>
+              <span>{{../hostedTranslations.hosted_operator_mail_retry_next_attempt}}: {{nextAttempt}}</span>
+              {{#if lastError}}
+              <span>{{../hostedTranslations.hosted_operator_mail_retry_error}}: {{lastError}}</span>
+              {{/if}}
+            </div>
+          </li>
+          {{/hostedOperatorNoticeRetries}}
+        </ul>
+        {{else}}
+        <p class="hosted-account-note">{{hostedTranslations.hosted_operator_mail_retry_empty}}</p>
+        {{/if}}
+        {{/if}}
+      </section>
+    </main>
+{{/hosted-layout}}

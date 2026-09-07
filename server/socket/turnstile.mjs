@@ -249,4 +249,9 @@ async function handleTurnstileTokenMessage(
   }
 }
 
-export { handleTurnstileTokenMessage, isTurnstileValidationActive };
+export {
+  handleTurnstileTokenMessage,
+  isTurnstileValidationActive,
+  normalizeTurnstileHostname,
+  verifyTurnstileToken,
+};

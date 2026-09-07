@@ -1,9 +1,12 @@
 import { isValidBoardName } from "../../client-data/js/board_name.js";
 import {
   formatMessageTypeTag,
+  getMutationType,
   getToolId,
 } from "../../client-data/js/message_tool_metadata.js";
+import { MutationType } from "../../client-data/js/mutation_type.js";
 import RateLimitCommon from "../../client-data/js/rate_limit_common.js";
+import { TOOL_CODE_BY_ID } from "../../client-data/tools/manifest.js";
 import { BoardPermissions } from "../auth/board_capabilities.mjs";
 import observability from "../observability/index.mjs";
 import { getEditBanExpiresAt } from "./bans.mjs";
@@ -12,6 +15,8 @@ import { getSocketUserSecret } from "./request.mjs";
 import { getTemporaryModeratorExpiresAt } from "./temporary_moderators.mjs";
 
 const { logger, metrics, tracing } = observability;
+
+const CURSOR_TOOL_CODE = TOOL_CODE_BY_ID.cursor;
 
 /** @typedef {import("../../types/server-runtime.d.ts").AppSocket} AppSocket */
 /** @typedef {import("../../types/server-runtime.d.ts").BoardLike} BoardLike */
@@ -384,7 +389,13 @@ function boardPermissionsForSocket(config, boardName, socket) {
   const permissions = BoardPermissions.forBoard({
     config,
     boardName,
-    userInfo: { token: getSocketToken(socket), userSecret },
+    userInfo: {
+      token: getSocketToken(socket),
+      userSecret,
+      // Pinned by hosted admission before any capability query. Hosted boards
+      // never consult JWTs, and a forged query token cannot escalate it.
+      hostedRole: socket.hostedBoardRole || null,
+    },
     // Lazy + live: only resolved when a capability query depends on the ban
     // (so canOpen never needs the IP), and re-read on every query so a ban and
     // its expiry take effect without reconnecting. The expiry is also exposed
@@ -494,6 +505,43 @@ function canEditBoard(config, board, socket) {
  * @returns {boolean}
  */
 function canApplyBoardMessage(config, board, data, socket) {
+  // Hosted sockets re-validate against the admission module before any
+  // persistent mutation: lifecycle, bans, and the account's writer slot can
+  // all change while the connection stays open. Cursor messages stay with the
+  // legacy capability check so read-only tabs keep sharing presence.
+  const hosted = socket.hostedEventModule;
+  const admission = socket.hostedEventAdmission;
+  if (
+    hosted?.enabled === true &&
+    admission &&
+    data &&
+    data.tool !== CURSOR_TOOL_CODE
+  ) {
+    const verdict = hosted.revalidateSocketWrite(admission);
+    if (verdict.ok === false) {
+      logger.warn("socket.hosted_write_rejected", {
+        socket: socket.id,
+        board: board.name,
+        reason: verdict.reason,
+      });
+      return false;
+    }
+    // Hosted events record who cleared and why; a Clear without a reason is
+    // rejected like any other blocked write. Legacy boards are unaffected.
+    if (
+      getMutationType(data) === MutationType.CLEAR &&
+      (() => {
+        const reason = /** @type {{reason?: unknown}} */ (data).reason;
+        return typeof reason !== "string" || reason.trim() === "";
+      })()
+    ) {
+      logger.warn("socket.hosted_clear_reason_required", {
+        socket: socket.id,
+        board: board.name,
+      });
+      return false;
+    }
+  }
   return boardPermissionsForSocket(
     config,
     board.name,
@@ -507,11 +555,10 @@ export {
   canAccessBoard,
   canApplyBoardMessage,
   canBanOnBoard,
+  canEditBoard,
   canGrantTemporaryModeratorOnBoard,
   canReportOnBoard,
-  canEditBoard,
   clientIpFallback,
-  resolveRequestClientIpSafe,
   countConstructiveActions,
   countDestructiveActions,
   countTextCreationActions,
@@ -520,4 +567,5 @@ export {
   normalizeBoardName,
   normalizeBroadcastData,
   parseForwardedChain,
+  resolveRequestClientIpSafe,
 };
