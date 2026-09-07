@@ -3,6 +3,7 @@ import * as path from "node:path";
 import crypto from "node:crypto";
 
 import observability from "../../observability/index.mjs";
+import { createFileStateDocuments } from "../storage/documents.mjs";
 
 const { logger } = observability;
 
@@ -36,25 +37,29 @@ function randomAssetId() {
 /**
  * Durable storage for validated Brand Asset images.
  *
- * Following the account and organizer stores, the first release keeps metadata
- * as a JSON index under one data directory and the decoded bytes as opaque
- * files beside it — deliberately outside the static web root, so the only way
- * to read an asset is the controlled route, never a static file handler. Bytes
- * are only ever written here after `sniffImage` has accepted them, so an upload
- * can never become an executable or script-bearing page.
+ * Metadata uses the selected state-document adapter; decoded bytes use the
+ * selected private object adapter or local opaque files. The only read path is
+ * the controlled route, never a static file handler. Bytes are only ever
+ * written here after `sniffImage` has accepted them, so an upload can never
+ * become an executable or script-bearing page.
  *
  * @param {{
  *   dataDir: string,
  *   clock?: () => number,
  *   randomId?: () => string,
+ *   stateDocuments?: import("../storage/documents.mjs").StateDocuments,
+ *   objectStore?: ReturnType<typeof import("../archive/store.mjs").createFileBoardArchiveStore>,
  * }} options
  */
 function createFileBrandAssetStore(options) {
   const dataDir = options.dataDir;
+  const stateDocuments =
+    options.stateDocuments || createFileStateDocuments({ dataDir });
+  const objectStore = options.objectStore || null;
   const clock = options.clock || (() => Date.now());
   const randomId = options.randomId || randomAssetId;
   const assetsDir = path.join(dataDir, "brand-assets");
-  const INDEX_FILE = path.join(assetsDir, "index.json");
+  const INDEX_FILE = "brand-assets/index.json";
 
   /** @type {Map<string, StoredBrandAsset>} */
   const assetsById = new Map();
@@ -64,17 +69,11 @@ function createFileBrandAssetStore(options) {
   function ensureLoaded() {
     if (loaded) return;
     loaded = true;
-    fs.mkdirSync(assetsDir, { recursive: true });
-    let contents;
-    try {
-      contents = fs.readFileSync(INDEX_FILE, "utf8");
-    } catch (error) {
-      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") {
-        return;
-      }
-      throw error;
-    }
-    const parsed = JSON.parse(contents);
+    const fallback = { assets: [] };
+    const parsed = /** @type {any} */ (
+      stateDocuments.read(INDEX_FILE, fallback)
+    );
+    if (parsed === fallback) return;
     if (parsed.version !== STORE_FORMAT_VERSION) {
       throw new Error(`Unsupported hosted brand asset store format`);
     }
@@ -91,6 +90,11 @@ function createFileBrandAssetStore(options) {
    */
   function bytesPath(assetId) {
     return path.join(assetsDir, `${assetId}.bin`);
+  }
+
+  /** @param {StoredBrandAsset} asset */
+  function objectKey(asset) {
+    return `brand-assets/${asset.assetId}.${asset.format}`;
   }
 
   /**
@@ -119,19 +123,15 @@ function createFileBrandAssetStore(options) {
    * @returns {Promise<void>}
    */
   async function persistIndexNow() {
-    fs.mkdirSync(assetsDir, { recursive: true });
-    const temporaryPath = `${INDEX_FILE}.tmp-${process.pid}-${crypto
-      .randomBytes(4)
-      .toString("hex")}`;
-    await fs.promises.writeFile(
-      temporaryPath,
-      JSON.stringify({
-        version: STORE_FORMAT_VERSION,
-        assets: [...assetsById.values()],
-      }),
-      "utf8",
-    );
-    await fs.promises.rename(temporaryPath, INDEX_FILE);
+    await stateDocuments.writeMany([
+      {
+        key: INDEX_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          assets: [...assetsById.values()],
+        },
+      },
+    ]);
   }
 
   /**
@@ -152,13 +152,6 @@ function createFileBrandAssetStore(options) {
   async function putAsset(input) {
     ensureLoaded();
     const assetId = randomId();
-    // Write the bytes first (atomic rename) so the index never references a
-    // missing file.
-    const temporaryPath = `${bytesPath(assetId)}.tmp-${process.pid}-${crypto
-      .randomBytes(4)
-      .toString("hex")}`;
-    await fs.promises.writeFile(temporaryPath, input.bytes);
-    await fs.promises.rename(temporaryPath, bytesPath(assetId));
     /** @type {StoredBrandAsset} */
     const asset = {
       assetId,
@@ -170,6 +163,17 @@ function createFileBrandAssetStore(options) {
       byteLength: input.bytes.length,
       createdAtMs: clock(),
     };
+    // Store bytes first so metadata never references a missing object.
+    if (objectStore) {
+      await objectStore.putArchive(objectKey(asset), input.bytes);
+    } else {
+      await fs.promises.mkdir(assetsDir, { recursive: true });
+      const temporaryPath = `${bytesPath(assetId)}.tmp-${process.pid}-${crypto
+        .randomBytes(4)
+        .toString("hex")}`;
+      await fs.promises.writeFile(temporaryPath, input.bytes);
+      await fs.promises.rename(temporaryPath, bytesPath(assetId));
+    }
     assetsById.set(assetId, asset);
     await enqueueWrite(persistIndexNow);
     return { assetId };
@@ -196,7 +200,9 @@ function createFileBrandAssetStore(options) {
     const asset = getAsset(assetId);
     if (!asset) return null;
     try {
-      return await fs.promises.readFile(bytesPath(assetId));
+      return objectStore
+        ? await objectStore.readArchive(objectKey(asset))
+        : await fs.promises.readFile(bytesPath(assetId));
     } catch (error) {
       logger.error("hosted_brand_asset_store.read_failed", {
         error,
@@ -221,7 +227,11 @@ function createFileBrandAssetStore(options) {
     assetsById.delete(asset.assetId);
     await enqueueWrite(async () => {
       await persistIndexNow();
-      await fs.promises.rm(bytesPath(asset.assetId), { force: true });
+      if (objectStore) {
+        await objectStore.deleteObject(objectKey(asset));
+      } else {
+        await fs.promises.rm(bytesPath(asset.assetId), { force: true });
+      }
     });
     return { ok: true };
   }

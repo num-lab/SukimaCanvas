@@ -40,6 +40,16 @@ Measured result:
 | Permission boundaries | Organizer Owner role, live Event Membership, and Event Ban all unchanged after the restart; admission decisions answered from durable state alone (`hosted_recovery_drill.test.js` second test). |
 | Restore/PITR | A crash-consistent backup (plain recursive copy) plus re-shipped ledger tails rebuilds every accepted write — including one accepted after the backup — and the restored state drives a complete close with `finalSeq` 2 and a manifest ledger hash matching the re-shipped file (`hosted_recovery_drill.test.js` restore drill). |
 
+This recorded drill predates the production storage selection and proves the
+recovery behavior with disposable file adapters. On 2026-09-07,
+`test-node/hosted_storage_adapters.test.js` additionally passed against a real
+PostgreSQL 16 container: JSONB document restart, ordered ledger rows and
+deletion, competing-instance lock rejection, and register/verify/restart/login
+all passed. Its S3 test uses a protocol fake to prove immutable writes,
+prefixing, and Brand Asset/Image Export byte placement. Neither test is a
+production PostgreSQL WAL restore or a real R2 backup/restore; those remain the
+external launch evidence in §7.
+
 ## 2. Capacity commitments and rejection behavior
 
 Automated proof: `node --test test-node/hosted_capacity_limits.test.js`
@@ -66,6 +76,12 @@ independent) and the reservation route validation for the 1–50 seat band.
 | broadcast: 20,000 mixed socket broadcasts | avg 126.6 ms (122.6 / 124.3 / 132.9); 70.7 MiB transient |
 | archive: close a 32,768-item Board Session carrying an 8,320-entry ledger (archives 19.1 MiB canvas + 2.0 MiB ledger) | avg 105.6 ms (101.6 / 106.4 / 108.8); 79.2 MiB transient |
 | export: render a 512-item archive to a 7211x3096 PNG (0.4 MiB) | avg 2,356.9 ms (2,319.7 / 2,338.7 / 2,412.3); 7.4 MiB transient |
+
+Post-storage-adapter recheck on 2026-09-07 remained within the recorded
+baseline's normal variance: e2e 344.5 ms, load 85.7 ms, persist 49.3 ms,
+broadcast 122.7 ms, archive 103.3 ms, and export 2,184.3 ms. This run exercises
+the local adapter benchmark fixtures; target-host PostgreSQL/R2 latency belongs
+to the deployment-shaped validation.
 
 The `archive` and `export` scenarios (`scripts/benchmark-hosted-outcomes.mjs`)
 drive the real composed pipelines against real file stores, so both hot
@@ -130,9 +146,9 @@ one-time-reveal behaviors that keep secrets out of responses and logs.
 
 - Single active application instance is the deployment constraint;
   documented in `docs/operations/runbook.md` §6. Every durable subsystem
-  (state, queues, ledgers, archives) recovers from disk alone — the
-  recovery drill is the standing proof that nothing depends on local
-  process state.
+  (state, queues, and ledgers in PostgreSQL; artifacts in R2) lives outside
+  the application process. PostgreSQL's advisory lock rejects an accidental
+  second active instance.
 - The `/source` page serves the immutable, version-pinned Corresponding
   Source mapping and fails closed (503) when the deployment mapping is
   missing or a rolling version label is pinned (tested in
@@ -143,7 +159,7 @@ one-time-reveal behaviors that keep secrets out of responses and logs.
 
 | Gate | Command | Status |
 | --- | --- | --- |
-| Node suite (incl. recovery drill + capacity) | `npm run test-node` | 703 passing, 0 failing |
+| Node suite (incl. recovery drill + capacity) | `npm run test-node` | 713 passing, 2 external-PostgreSQL tests skipped, 0 failing; the same adapter file passes 5/5 with PostgreSQL 16 enabled |
 | Browser suite | `npx playwright test` | 86 passing |
 | Lint | `npm run lint` | clean |
 | Typecheck | `npm run typecheck` | clean |
@@ -166,13 +182,11 @@ this gate on its own: run `npm run lint` before merging to `master`.
    documented capacity procedure (runbook §4) with 20 concurrent live
    sessions / 1,000 provisioned seats on the target infrastructure and
    record the measured headroom here before opening registrations.
-3. **Image Export blocks the shared instance** (issue 24). A full-capacity
-   export holds the event loop for minutes (§3). Decide and record the
-   mitigation before opening registrations: an asynchronous render call, a
-   worker thread or separate process, cheaper SVG parsing, or a documented
-   limit on archive size for export. The measurement, not the fix, is what
-   this evidence records.
-4. PostgreSQL and S3-compatible object storage adapter selection; the
-   backup/PITR procedures map onto them per runbook §2.
-5. Legal review of Terms of Service and Privacy Policy (external,
-   required — listed here alongside item 1's launch-blocking review).
+3. **Image Export blocks the shared instance** (issue 24). The performance
+   work is deliberately deferred until after the production-shaped deployment
+   test. Before opening registrations, choose and record an async render,
+   worker/process isolation, cheaper parsing, or an enforceable export limit.
+4. **Production storage recovery evidence:** the PostgreSQL and Cloudflare R2
+   adapters are selected and implemented, but real R2 credential preflight,
+   off-host PostgreSQL base backup/WAL archiving, independent R2 backup, and
+   the combined restore drill in runbook §3 still need to run on the target.

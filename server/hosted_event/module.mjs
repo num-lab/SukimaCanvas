@@ -11,7 +11,6 @@ import {
 import { createFileAccountStore } from "./accounts/store.mjs";
 import { createEventAdmission } from "./admission/index.mjs";
 import { createBoardArchivePipeline } from "./archive/close.mjs";
-import { createFileBoardArchiveStore } from "./archive/store.mjs";
 import { createFileBrandAssetStore } from "./assets/store.mjs";
 import { createParticipantIdentifierResolver } from "./attribution.mjs";
 import { createEventRoutes } from "./events/routes.mjs";
@@ -21,7 +20,6 @@ import { createHistoricalImportRoutes } from "./history/routes.mjs";
 import { createFileHistoricalArchiveStore } from "./history/store.mjs";
 import { createIntegrationRoutes } from "./integrations/routes.mjs";
 import { createFileIntegrationStore } from "./integrations/store.mjs";
-import { createFileBoardMutationLedger } from "./ledger/store.mjs";
 import { createFileEventMembershipStore } from "./memberships/store.mjs";
 import { createEventModeration } from "./moderation/index.mjs";
 import { createFileModerationStore } from "./moderation/store.mjs";
@@ -34,6 +32,7 @@ import { createFileOrganizerStore } from "./organizers/store.mjs";
 import { createOutcomeRetentionPipeline } from "./outcomes.mjs";
 import { createFilePublicationStore } from "./publication/store.mjs";
 import { createReservationRoutes } from "./reservations/routes.mjs";
+import { createHostedStorage } from "./storage/index.mjs";
 
 /** @import { HttpRequest, HttpResponse, ServerConfig } from "../../types/server-runtime.d.ts" */
 
@@ -165,8 +164,11 @@ function createHostedEventModule(config, paths) {
   // time without sleeps.
   const clock =
     typeof config.HOSTED_CLOCK === "function" ? config.HOSTED_CLOCK : undefined;
+  const storage = createHostedStorage(config);
+  const { archiveStore, stateDocuments } = storage;
   const store = createFileAccountStore({
     dataDir: config.HOSTED_DATA_DIR,
+    stateDocuments,
     clock,
     sessionMaxAgeMs: config.HOSTED_SESSION_MAX_AGE_MS,
     sessionIdleMs: config.HOSTED_SESSION_IDLE_TIMEOUT_MS,
@@ -175,22 +177,28 @@ function createHostedEventModule(config, paths) {
   });
   const organizerStore = createFileOrganizerStore({
     dataDir: config.HOSTED_DATA_DIR,
+    stateDocuments,
     clock,
   });
   const assetStore = createFileBrandAssetStore({
     dataDir: config.HOSTED_DATA_DIR,
+    stateDocuments,
+    objectStore: config.HOSTED_OBJECT_STORE === "s3" ? archiveStore : undefined,
     clock,
   });
   const membershipStore = createFileEventMembershipStore({
     dataDir: config.HOSTED_DATA_DIR,
+    stateDocuments,
     clock,
   });
   const moderationStore = createFileModerationStore({
     dataDir: config.HOSTED_DATA_DIR,
+    stateDocuments,
     clock,
   });
   const integrationStore = createFileIntegrationStore({
     dataDir: config.HOSTED_DATA_DIR,
+    stateDocuments,
     clock,
     grantTtlMs: config.HOSTED_ENTRY_GRANT_TTL_MS,
   });
@@ -209,6 +217,7 @@ function createHostedEventModule(config, paths) {
   // the outbox adapter remains the production delivery path.
   const notificationStore = createFileNotificationStore({
     dataDir: config.HOSTED_DATA_DIR,
+    stateDocuments,
     clock,
   });
   const notifications = createNotificationService({
@@ -225,6 +234,7 @@ function createHostedEventModule(config, paths) {
   // at least once to every active subscription with HMAC signatures.
   const webhookStore = createFileWebhookStore({
     dataDir: config.HOSTED_DATA_DIR,
+    stateDocuments,
     clock,
     allowInsecureHttp: config.IS_DEVELOPMENT === true,
   });
@@ -260,25 +270,22 @@ function createHostedEventModule(config, paths) {
   );
   const sourceMapping = resolveSourceMapping(config);
 
-  // Private Board Archive storage: write-once objects under
-  // `<HOSTED_DATA_DIR>/board-archives/`, addressed by internal keys that are
-  // never public access credentials. The close pipeline below is the only
-  // writer; the publication store adds derived Published Canvas objects in
-  // its own key namespace.
-  const archiveStore = createFileBoardArchiveStore({
-    dataDir: config.HOSTED_DATA_DIR,
-  });
+  // Private objects use the selected file or S3-compatible adapter. The same
+  // immutable object seam owns Board Archives, publications, Brand Assets,
+  // Historical Archives, and successful PNG Image Exports.
   // Historical Archives: operator-imported legacy WBO results under their own
   // `historical-archives/` key namespace. They are not Board Sessions — no
   // lifecycle, publication, export, or retention surface ever touches them.
   const historyStore = createFileHistoricalArchiveStore({
     dataDir: config.HOSTED_DATA_DIR,
+    stateDocuments,
     clock,
     archiveStore,
     organizerStore,
   });
   const publicationStore = createFilePublicationStore({
     dataDir: config.HOSTED_DATA_DIR,
+    stateDocuments,
     clock,
     archiveStore,
   });
@@ -294,6 +301,8 @@ function createHostedEventModule(config, paths) {
   // from the deployment secret, never stored.
   const exportStore = createFileBoardExportStore({
     dataDir: config.HOSTED_DATA_DIR,
+    stateDocuments,
+    objectStore: config.HOSTED_OBJECT_STORE === "s3" ? archiveStore : undefined,
     clock,
     linkTtlMs: config.HOSTED_BOARD_EXPORT_LINK_TTL_MS,
     hmacKey: config.AUTH_SECRET_KEY,
@@ -316,6 +325,7 @@ function createHostedEventModule(config, paths) {
     exportStore,
     config,
     clock,
+    deleteBoardMutationLedger: storage.deleteBoardMutationLedger,
   });
   const serviceClock = clock || (() => Date.now());
   const closeDrainMs = config.HOSTED_BOARD_SESSION_CLOSE_DRAIN_MS;
@@ -566,6 +576,7 @@ function createHostedEventModule(config, paths) {
     publicationStore,
     archiveStore,
     participantIdentifierFor,
+    createBoardMutationLedger: storage.createBoardMutationLedger,
 
     exportStore,
     exportPipeline: boardExportPipeline,
@@ -596,16 +607,7 @@ function createHostedEventModule(config, paths) {
     },
   });
   if (config.HOSTED_MODE === true) {
-    // Durable mutation ledger: every accepted persistent write on a hosted
-    // board is fsynced into `<HOSTED_DATA_DIR>/mutation-ledger/<board>.jsonl`
-    // before its sender is confirmed. The stored SVG stays a rebuildable
-    // projection; loads replay ledger entries past the snapshot sequence.
-    registerBoardMutationLedgerFactory((boardName) =>
-      createFileBoardMutationLedger({
-        boardName,
-        dataDir: config.HOSTED_DATA_DIR,
-      }),
-    );
+    registerBoardMutationLedgerFactory(storage.createBoardMutationLedger);
   }
 
   // Durable lifecycle poker: advances Board Sessions and seals drained ones
@@ -616,22 +618,70 @@ function createHostedEventModule(config, paths) {
   // requests) or when the poll interval is zero, and never keeps the process
   // alive on its own.
   const pollMs = config.HOSTED_LIFECYCLE_POLL_MS;
-  if (
-    config.HOSTED_MODE === true &&
-    clock === undefined &&
-    typeof pollMs === "number" &&
-    pollMs > 0
-  ) {
-    const timer = setInterval(() => {
+  /** @type {NodeJS.Timeout | undefined} */
+  let lifecycleTimer;
+  function startLifecycleTimer() {
+    if (
+      lifecycleTimer ||
+      config.HOSTED_MODE !== true ||
+      clock !== undefined ||
+      typeof pollMs !== "number" ||
+      pollMs <= 0
+    ) {
+      return;
+    }
+    lifecycleTimer = setInterval(() => {
       refreshEventLifecycle().catch((error) => {
         logger.error("hosted.lifecycle_poke_failed", { error });
       });
     }, pollMs);
-    if (typeof timer.unref === "function") timer.unref();
+    lifecycleTimer.unref();
+  }
+
+  async function initialize() {
+    await storage.initialize();
+    if (config.HOSTED_STATE_STORE === "postgres") {
+      // Eagerly hydrate every in-memory index before the server listens. In
+      // PostgreSQL mode a synchronous read before this point is rejected.
+      await Promise.all([
+        store.flush(),
+        organizerStore.flush(),
+        assetStore.flush(),
+        membershipStore.flush(),
+        moderationStore.flush(),
+        integrationStore.flush(),
+        notificationStore.flush(),
+        webhookStore.flush(),
+        historyStore.flush(),
+        publicationStore.flush(),
+        exportStore.flush(),
+      ]);
+    }
+    startLifecycleTimer();
+  }
+
+  async function close() {
+    if (lifecycleTimer) clearInterval(lifecycleTimer);
+    await Promise.all([
+      store.flush(),
+      organizerStore.flush(),
+      assetStore.flush(),
+      membershipStore.flush(),
+      moderationStore.flush(),
+      integrationStore.flush(),
+      notificationStore.flush(),
+      webhookStore.flush(),
+      historyStore.flush(),
+      publicationStore.flush(),
+      exportStore.flush(),
+    ]);
+    await storage.close();
   }
 
   return {
     enabled: config.HOSTED_MODE === true,
+    initialize,
+    close,
     serveHome: eventRoutes.serveHome,
     serveSource(ctx) {
       const statusCode = sourceMapping.available ? 200 : 503;

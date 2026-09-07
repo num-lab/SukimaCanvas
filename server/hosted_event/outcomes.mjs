@@ -31,6 +31,7 @@ const { logger, metrics } = observability;
  *   exportStore: ReturnType<typeof import("./export/store.mjs").createFileBoardExportStore>,
  *   config: import("../../types/server-runtime.d.ts").ServerConfig,
  *   clock?: () => number,
+ *   deleteBoardMutationLedger?: (boardName: string) => Promise<void>,
  * }} OutcomeRetentionPipelineDependencies
  */
 
@@ -109,6 +110,13 @@ function createOutcomeRetentionPipeline(dependencies) {
   const { organizerStore, archiveStore, publicationStore, exportStore } =
     dependencies;
   const clock = dependencies.clock || (() => Date.now());
+  const deleteBoardMutationLedger =
+    dependencies.deleteBoardMutationLedger ||
+    ((boardName) =>
+      deleteBoardMutationLedgerFile({
+        boardName,
+        dataDir: dependencies.config.HOSTED_DATA_DIR,
+      }));
   const retentionMs = Math.max(
     0,
     Number(dependencies.config.HOSTED_OUTCOME_RETENTION_MS) || 0,
@@ -229,10 +237,7 @@ function createOutcomeRetentionPipeline(dependencies) {
         session.status === "closed" && session.outcomesPurgedAtMs === null,
     );
     if (!hasLiveSession && !hasUnpurgedSession) {
-      await deleteBoardMutationLedgerFile({
-        boardName: event.boardName,
-        dataDir: dependencies.config.HOSTED_DATA_DIR,
-      });
+      await deleteBoardMutationLedger(event.boardName);
     }
     return {
       purgedSessions: markers.purgedSessions,

@@ -48,10 +48,67 @@ export const WEBROOT = parseStringEnv("WBO_WEBROOT", DEFAULT_WEBROOT);
 /** Whether the Hosted Event Service shell is enabled for this deployment. */
 export const HOSTED_MODE = parseBooleanEnv("WBO_HOSTED_MODE", false);
 
-/** Directory where Hosted Event Service business state (accounts, sessions, verification tokens) is stored. */
+/** Root used by local Hosted state/object adapters and the default mail outbox. */
 export const HOSTED_DATA_DIR = parseStringEnv(
   "WBO_HOSTED_DATA_DIR",
   path.join(APP_ROOT, "hosted-data"),
+);
+
+/** Mutable Hosted state backend: local JSON files or PostgreSQL. */
+export const HOSTED_STATE_STORE = parseEnumEnv(
+  "WBO_HOSTED_STATE_STORE",
+  ["file", "postgres"],
+  "file",
+);
+
+/** PostgreSQL connection URL. Required when `HOSTED_STATE_STORE=postgres`. */
+export const HOSTED_DATABASE_URL = parseStringEnv(
+  "WBO_HOSTED_DATABASE_URL",
+  "",
+);
+
+/** PostgreSQL transport security policy. */
+export const HOSTED_DATABASE_SSL = parseEnumEnv(
+  "WBO_HOSTED_DATABASE_SSL",
+  ["disable", "require", "verify-full"],
+  "disable",
+);
+
+/** Maximum application connections in the PostgreSQL pool. */
+export const HOSTED_DATABASE_MAX_CONNECTIONS = parseIntegerEnv(
+  "WBO_HOSTED_DATABASE_MAX_CONNECTIONS",
+  10,
+);
+
+/** Immutable Hosted object backend: local files or an S3-compatible bucket. */
+export const HOSTED_OBJECT_STORE = parseEnumEnv(
+  "WBO_HOSTED_OBJECT_STORE",
+  ["file", "s3"],
+  "file",
+);
+
+/** S3-compatible HTTPS endpoint; Cloudflare R2 uses its account endpoint. */
+export const HOSTED_S3_ENDPOINT = parseStringEnv("WBO_HOSTED_S3_ENDPOINT", "");
+
+/** Private bucket holding Hosted artifacts. */
+export const HOSTED_S3_BUCKET = parseStringEnv("WBO_HOSTED_S3_BUCKET", "");
+
+/** S3 signing region. Cloudflare R2 requires `auto`. */
+export const HOSTED_S3_REGION = parseStringEnv("WBO_HOSTED_S3_REGION", "auto");
+
+/** Optional key prefix for isolating an environment inside a bucket. */
+export const HOSTED_S3_PREFIX = parseStringEnv("WBO_HOSTED_S3_PREFIX", "");
+
+/** Bucket-scoped S3 access key id. */
+export const HOSTED_S3_ACCESS_KEY_ID = parseStringEnv(
+  "WBO_HOSTED_S3_ACCESS_KEY_ID",
+  "",
+);
+
+/** Bucket-scoped S3 secret access key. */
+export const HOSTED_S3_SECRET_ACCESS_KEY = parseStringEnv(
+  "WBO_HOSTED_S3_SECRET_ACCESS_KEY",
+  "",
 );
 
 /** Directory the `outbox` mail transport queues outgoing mail into as JSON files. */

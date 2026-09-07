@@ -31,3 +31,4 @@
   - `renderAsync(svg, options, signal)`：改一个调用点，`renderArchivePng` 变 async。实测主线程最大延迟 17,825 ms → 448 ms，残留部分是仍然同步的 `asPng()`。**但它跑在 libuv 线程池上**（已验证：默认池下 8 个并发渲染分两波 12.1s/26.0s 完成，`UV_THREADPOOL_SIZE=8` 后合并为一波 ~24s），与 `fs` 共用——账本 fsync、各 JSON store 写入、快照保存都在那个池里，一次 4 分钟的导出会占住 4 槽中的 1 槽。其 AbortSignal 只能取消尚未开始的任务，无法打断进行中的渲染。
   - worker thread / 独立进程：同时隔离事件循环与 libuv 池，并且是唯一能对跑飞渲染硬超时强杀的手段；内存也隔离（8192×7844 的 RGBA 约 257 MB）。代价是生命周期管理与跨边界搬运（SVG 进 ~4 MiB、PNG 出 18.6 MiB）。
 - 未验证但值得先测的方向：解析开销可能由文本元素的字体匹配主导（`loadSystemFonts: true` 在解析期逐元素匹配，测量用的 fixture 有三分之一是 text）。若成立，`loadSystemFonts: false` 加内置字体列表可能直接降低数量级，比换线程模型更划算。任何线程方案都只是让导出不再拖垮别人，不会让它变快。
+- 2026-09-07（user decision）：本票保持 `ready-for-agent`，暂不实施。先补全项目与 PostgreSQL/R2/SMTP 接线，在服务器完成生产形态测试，再以该测试基线处理性能；公开注册前仍需完成或落实可执行的导出规模限制。

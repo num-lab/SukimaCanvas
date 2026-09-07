@@ -1,0 +1,3 @@
+# Use self-hosted PostgreSQL and Cloudflare R2 for Hosted storage
+
+SukimaCanvas will keep mutable Hosted state and the authoritative mutation ledger in self-hosted PostgreSQL, and immutable Board Archives, Published Canvases, Brand Assets, Historical Archives, and Image Exports in a private Cloudflare R2 bucket through the portable S3 adapter. To preserve the existing synchronous authorization paths without an application-wide async rewrite, one active application instance loads JSONB state documents into memory at startup, commits mutations transactionally back to PostgreSQL, and holds a PostgreSQL advisory lock; local SVG snapshots remain a disposable cache that can be rebuilt from the ledger.

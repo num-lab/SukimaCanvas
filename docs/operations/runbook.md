@@ -6,113 +6,93 @@ playbooks, operational signals, and deployment constraints. The recorded
 results of the launch acceptance evidence live in
 [launch-evidence.md](./launch-evidence.md).
 
-The first release runs on the file-backed adapters described below. The
-procedures are written so the adapter can be swapped to PostgreSQL and
-S3-compatible object storage (see `docs/adr/0005-use-database-backed-work-for-lifecycle-and-delivery.md`
-and `docs/adr/0007-store-board-artifacts-in-object-storage.md`) without
-changing the recovery contract — every durable subsystem writes
-crash-consistent records and recovers from disk alone.
+The production profile uses self-hosted PostgreSQL and a private Cloudflare R2
+bucket (ADR 0011). File-backed adapters remain available for tests and local
+trials only. PostgreSQL, R2, and their off-host backups form the recovery
+boundary; the application host does not.
 
 ## 1. Durable state inventory
 
-Everything the service needs to rebuild itself lives under one data root,
-`WBO_HOSTED_DATA_DIR` (default `<cwd>/hosted-data`), plus the WBO board
-history directory `WBO_HISTORY_DIR`:
-
-| Subsystem | File(s) | Recovery behavior |
+| Store | Contents | Recovery behavior |
 | --- | --- | --- |
-| Accounts, sessions, tokens | `accounts.json`, `sessions.json`, `verifications.json`, `resets.json` | Atomic tmp+rename writes; session ids and single-use tokens stored as SHA-256 digests only. |
-| Organizers, reservations, events, sessions | `organizers.json`, `organizer_roles.json`, `reservations.json`, `events.json`, `board_sessions.json`, `event_moderators.json` | Atomic writes; lifecycle fields hydrate onto older records without migration. |
-| Change Audit | `change_audit.json` | Append-only administrative trail (internal Account ids only). |
-| Board snapshots | `WBO_HISTORY_DIR/<board>.svg` (+ `.bak` staging) | Rebuildable projection of the ledger; unreadable snapshots are quarantined (`svg.snapshot_unreadable_quarantined`). |
-| Mutation ledger (Change Audit of board writes) | `mutation-ledger/<board>.jsonl` | fsync per acceptance before the sender is confirmed; torn tails repaired on read. |
-| Private Board Archives | `board-archives/<boardSessionId>/{canvas.svg,ledger.jsonl,manifest.json}` | Manifest written last as the commit marker; interrupted closes retry safely. |
-| Published Canvas objects | `board-archives/published-canvases/<boardSessionId>/<generation>.svg` | Immutable derived artifacts keyed by generation. |
-| Image Exports | `board-exports/index.json`, `board-exports/<exportId>.png` | Jobs survive restarts; `processing` jobs re-queue. |
-| Notification queue (mail) | `notifications.json` | Idempotent enqueue; sent records shrink to tombstones. |
-| Webhook subscriptions + outbox | `webhooks.json`, `webhook_outbox.json` | Idempotent dedupe keys; delivered entries shrink to tombstones after 30 days. |
-| Moderation log | `moderation_log.json` | Append-only governance trail. |
-| Brand assets, historical imports | `assets/`, historical import store | Stored only after real image/format validation. |
+| PostgreSQL `wbo_hosted_state_documents` | Versioned JSONB documents for accounts, sessions and tokens; organizers, reservations, Events and Board Sessions; memberships and bans; Change Audit and moderation; API credentials and grants; notification and webhook queues; publication, Brand Asset, Historical Archive, and Export Job metadata. | Each store mutation replaces all of that store's documents in one transaction. The one active app loads them before listen and holds an advisory lock until shutdown. |
+| PostgreSQL `wbo_board_mutation_ledger` | One ordered row per accepted persistent board mutation, keyed by board name and sequence. | The row commits before sender confirmation. It is authoritative after the latest SVG snapshot and can rebuild a missing cache. |
+| Private R2 keys under `WBO_HOSTED_S3_PREFIX` | `board-archives/`, `published-canvases/`, `historical-archives/`, `brand-assets/`, and `image-exports/`. | Writes are immutable and idempotent; retention enumerates and deletes internal keys. Archive manifests remain the commit marker. |
+| Local `WBO_HISTORY_DIR` | Current board SVG snapshots and `.bak` staging. | Disposable projection cache. Unreadable snapshots are quarantined and rebuilt from PostgreSQL ledger rows. |
+
+Session ids, single-use account tokens, Access Codes, API credentials, and
+share secrets remain digest-only. R2 object keys are internal and must never be
+used as public credentials.
 
 ## 2. Backup and PITR
 
 ### 2.1 What makes a valid backup
 
-Every durable file is written atomically (temp file + rename) or
-fsync-appended (ledger), and every multi-object write has a commit marker
-written last (archive manifests, export records after bytes). This means a
-**crash-consistent volume snapshot** of the data root taken at any instant
-is a valid backup: the recovery paths tolerate exactly the states a crash
-can produce (torn ledger tails are repaired on read; marker-less archive
-objects are re-written by the close retry; ledger replays fill snapshots).
+A production backup has both parts:
 
-Accepted procedure (either is valid):
+1. A PostgreSQL physical base backup plus continuously archived WAL, stored
+   off the database host and tested with a `recovery_target_time`. `pg_dump`
+   is useful for logical exports but is not PITR and does not satisfy this
+   requirement by itself. Configure WAL shipping or a synchronous standby so
+   site-loss RPO remains at most 5 seconds.
+2. An independent copy of the private R2 prefix, in another failure and
+   credential boundary, with enough history to restore objects deleted by a
+   mistaken retention action or compromised credential. R2 durability protects
+   stored bytes from infrastructure loss; it is not a backup against a valid
+   delete request. A Bucket Lock may be used only when its prefix and retention
+   period do not prevent the application's required outcome deletion.
 
-1. **Volume/Filesystem snapshot** of `WBO_HOSTED_DATA_DIR` and
-   `WBO_HISTORY_DIR` (ZFS/btrfs/LVM/EBS snapshot). No application quiesce
-   is required; snapshots are crash-consistent by construction.
-2. **Quiesced copy** (lowest risk on plain filesystems): stop the single
-   active application process, copy the two directories, restart. RTO of
-   the copy window is seconds.
-
-Frequency: snapshots at least every 15 minutes, shipped off-host. Retention
-aligns with the outcome retention period (90 days) plus audit obligations.
+The local `board-cache` volume is optional in backup. Keep database and object
+backup timestamps together in the backup catalog. Retention must cover the
+90-day outcome window plus audit obligations.
 
 ### 2.2 Point-in-time recovery
 
-Board state is reconstructable to any point in time:
-
-- Snapshots are projections; the mutation ledger is authoritative.
-- Restoring the data root to a snapshot and replaying the ledger rebuilds
-  every accepted write with `acceptedAtMs <= target`.
-- The ledger file itself must be backed up continuously (it is
-  fsync-appended only, so log-shipping or frequent snapshots both work).
-- Non-board state (accounts, organizers, queues) restores to the snapshot
-  instant; the durable task queues (notices, webhook outbox, archive
-  retries) then re-drive every pending task forward.
-
-When PostgreSQL and S3-compatible object storage are selected, the same
-procedures map to: continuous WAL archiving (PITR) for the database,
-versioned bucket replication + lifecycle rules for objects, and the same
-monthly drill.
+PostgreSQL restores mutable state and accepted mutations to the chosen target.
+The restored R2 copy must contain every object referenced by that database
+state; extra immutable objects are harmless and can be reconciled later.
+Pending notification, webhook, archive, export, and purge records then re-drive
+idempotently. Local snapshots are projections and may be restored for speed or
+discarded and rebuilt from the ledger.
 
 ### 2.3 Restore procedure
 
-1. Provision a host with the deployed application version
-   (`WBO_DEPLOYMENT_VERSION` pinned).
-2. Restore the two directories from the snapshot (and re-ship the latest
-   ledger tails when log-shipping is used).
-3. Start the process. Recovery is automatic: no manual state surgery is
-   permitted or needed.
-4. Verify per the drill checklist in `launch-evidence.md`: accounts sign
-   in, sessions advance, `archive_failed` tasks retry, queues drain, the
-   Source page reports the pinned version.
+1. Stop the application and provision the pinned application version in an
+   isolated recovery environment.
+2. Restore PostgreSQL from the latest base backup and WAL to the target time.
+3. Restore any missing R2 objects from the independent object backup. Keep the
+   production bucket untouched; perform drills against a separate bucket and
+   prefix.
+4. Start with an empty `WBO_HISTORY_DIR` unless a matching cache snapshot is
+   available. Run `npm run check:hosted-storage` before starting the app.
+5. Start exactly one application process. Recovery is automatic; do not edit
+   JSONB documents, ledger rows, or manifests by hand.
+6. Verify per `launch-evidence.md`: accounts sign in, a board snapshot rebuilds,
+   sessions advance, `archive_failed` work retries, queues drain, authorized R2
+   artifacts read correctly, and `/source` reports the pinned version.
 
 ## 3. Monthly recovery drill
 
-Run monthly; record the result row in `launch-evidence.md`:
+Run monthly and record the result in `launch-evidence.md`:
 
-1. Snapshot the data root of a staging host (or restore the latest
-   production snapshot into staging).
-2. Run the automated equivalent: `node --test test-node/hosted_recovery_drill.test.js`
-   — it composes the real subsystems, accepts a persistent write through
-   the ledger fsync boundary, fails an archive task, queues a webhook event
-   and a notice, then **restarts every store and pipeline from disk alone**
-   and verifies: zero confirmed writes lost (RPO), the failed task is
-   visible and due, the webhook outbox and notice queue are intact,
-   permission boundaries (roles, memberships, Event Bans) are unchanged,
-   and the recovery finishes the archive, drains the outbox, and delivers
-   the notice (RTO far inside 15 minutes).
-3. Record: measured RTO (process restart to serving), RPO (confirmed
-   writes lost — expected 0), drill operator, date, and any anomalies.
+1. Keep the fast contract tests green:
+   `WBO_TEST_POSTGRES_URL=<isolated-url> node --test test-node/hosted_storage_adapters.test.js`
+   exercises PostgreSQL restart, ordered ledger recovery, the single-instance
+   lock, and the S3 protocol contract. The existing
+   `test-node/hosted_recovery_drill.test.js` still exercises every pipeline
+   against disposable file adapters.
+2. In staging, record a target time, accept a mutation, force an archive
+   failure, and enqueue one notice and webhook. Restore the latest production
+   PostgreSQL base backup plus WAL and the matching R2 backup into isolated
+   targets, then follow §2.3.
+3. Record application version, database and object backup ids, target time,
+   measured RPO/RTO, operator, and anomalies.
 
-Pass criteria: RPO ≤ 5 seconds (the fsync-before-confirm contract makes
-the measured window zero for confirmed writes), RTO ≤ 15 minutes measured
-on the drill host (the automated drill completes in well under a second;
-on the deployment target the restore copy time is added), and every
-consistency check in the drill green. The drill covers both recovery
-paths: restart from the live data root and restore from a crash-consistent
-backup with re-shipped ledger tails (PITR).
+Pass criteria: no confirmed mutation older than the 5-second RPO boundary is
+lost; serving resumes within 15 minutes; the ledger, permissions, referenced
+R2 objects, and task queues agree; every pending task completes exactly as its
+idempotency contract permits. Adapter tests alone are not production backup
+evidence.
 
 ## 4. Capacity commitments and rejection behavior
 
@@ -174,8 +154,8 @@ section covers the constraints that hold for every deploy afterwards.
 - **Single active application instance.** Exactly one process serves HTTP
   and Socket.IO for the deployment; scale-out is a post-launch decision
   that requires moving the seat/connection accounting first. Everything
-  else (all durable state above) already lives outside the process: a
-  restart — planned or crashed — loses nothing and recovers from disk.
+  else (all durable state above) already lives in PostgreSQL and R2: a restart
+  — planned or crashed — loses no committed state.
 - **Rolling restart procedure:** drain (stop intake, let the lifecycle
   poker seal), stop, deploy the pinned version, start. The durable task
   queues catch up through the persisted times; the lifecycle poker and
@@ -214,7 +194,9 @@ section covers the constraints that hold for every deploy afterwards.
    Policy for mainland China must be reviewed and approved by legal
    counsel. This runbook and the evidence record do not substitute for
    that review.
-2. PostgreSQL and S3-compatible object storage adapters are not selected
-   yet; §2 documents the contract they must satisfy.
+2. **Production recovery proof:** configure off-host PostgreSQL base
+   backups/WAL archiving and an independent R2 copy, then pass and record the
+   real restore drill in §3. Adapter selection and code-level restart tests are
+   complete; infrastructure backup evidence is not.
 3. Full-scale load validation on the production-shaped deployment target
    (see `launch-evidence.md` §Capacity).

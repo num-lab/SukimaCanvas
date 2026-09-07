@@ -1,8 +1,7 @@
 import crypto from "node:crypto";
-import * as fs from "node:fs";
-import * as path from "node:path";
 
 import observability from "../../observability/index.mjs";
+import { createFileStateDocuments } from "../storage/documents.mjs";
 import {
   credentialTokenMatches,
   digestCredentialToken,
@@ -62,10 +61,13 @@ const DEFAULT_ENTRY_GRANT_TTL_MS = 10 * 60 * 1000;
  *   clock?: () => number,
  *   randomId?: () => string,
  *   grantTtlMs?: number,
+ *   stateDocuments?: import("../storage/documents.mjs").StateDocuments,
  * }} options
  */
 function createFileIntegrationStore(options) {
   const dataDir = options.dataDir;
+  const stateDocuments =
+    options.stateDocuments || createFileStateDocuments({ dataDir });
   const clock = options.clock || (() => Date.now());
   const randomId = options.randomId || (() => crypto.randomUUID());
   const grantTtlMs =
@@ -82,13 +84,12 @@ function createFileIntegrationStore(options) {
   let loaded = false;
   let writeQueue = Promise.resolve();
 
-  const CREDENTIALS_FILE = path.join(dataDir, "api_credentials.json");
-  const GRANTS_FILE = path.join(dataDir, "entry_grants.json");
+  const CREDENTIALS_FILE = "api_credentials.json";
+  const GRANTS_FILE = "entry_grants.json";
 
   function ensureLoaded() {
     if (loaded) return;
     loaded = true;
-    fs.mkdirSync(dataDir, { recursive: true });
     const storedCredentials = readStoreFile(CREDENTIALS_FILE, {
       credentials: [],
     });
@@ -112,16 +113,8 @@ function createFileIntegrationStore(options) {
    * @returns {T}
    */
   function readStoreFile(filePath, fallback) {
-    let contents;
-    try {
-      contents = fs.readFileSync(filePath, "utf8");
-    } catch (error) {
-      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") {
-        return fallback;
-      }
-      throw error;
-    }
-    const parsed = JSON.parse(contents);
+    const parsed = /** @type {any} */ (stateDocuments.read(filePath, fallback));
+    if (parsed === fallback) return fallback;
     if (parsed.version !== STORE_FORMAT_VERSION) {
       throw new Error(
         `Unsupported hosted integration store format in ${filePath}`,
@@ -160,28 +153,22 @@ function createFileIntegrationStore(options) {
    * @returns {Promise<void>}
    */
   async function persistNow() {
-    fs.mkdirSync(dataDir, { recursive: true });
-    await writeStoreFile(CREDENTIALS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      credentials: [...credentialsById.values()],
-    });
-    await writeStoreFile(GRANTS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      grants: [...grantsByTokenDigest.values()],
-    });
-  }
-
-  /**
-   * @param {string} filePath
-   * @param {unknown} payload
-   * @returns {Promise<void>}
-   */
-  async function writeStoreFile(filePath, payload) {
-    const temporaryPath = `${filePath}.tmp-${process.pid}-${crypto
-      .randomBytes(4)
-      .toString("hex")}`;
-    await fs.promises.writeFile(temporaryPath, JSON.stringify(payload), "utf8");
-    await fs.promises.rename(temporaryPath, filePath);
+    await stateDocuments.writeMany([
+      {
+        key: CREDENTIALS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          credentials: [...credentialsById.values()],
+        },
+      },
+      {
+        key: GRANTS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          grants: [...grantsByTokenDigest.values()],
+        },
+      },
+    ]);
   }
 
   /**

@@ -1,9 +1,6 @@
-import crypto from "node:crypto";
-import * as fs from "node:fs";
-import * as path from "node:path";
-
 import observability from "../../observability/index.mjs";
 import { isValidNormalizedEmail, normalizeEmail } from "../accounts/emails.mjs";
+import { createFileStateDocuments } from "../storage/documents.mjs";
 
 const { logger } = observability;
 
@@ -39,11 +36,10 @@ const MAX_LAST_ERROR_LENGTH = 300;
  */
 
 /**
- * Durable storage for outgoing Hosted Event Service notices, in one JSON file
- * under the shared hosted data directory, exactly like the other hosted
- * stores: reads come from an in-memory index loaded on first use, and every
- * mutation is appended to a serialized write queue with atomic file
- * replacement. Enqueue is idempotent on the caller-supplied stable
+ * Durable storage for outgoing Hosted Event Service notices. Reads come from
+ * an in-memory index loaded on first use, and every mutation replaces a state
+ * document through the selected durable adapter. Enqueue is idempotent on the
+ * caller-supplied stable
  * notification id, so retries, duplicate trigger passes, and process restarts
  * can never queue the same logical notice twice.
  *
@@ -53,10 +49,13 @@ const MAX_LAST_ERROR_LENGTH = 300;
  * @param {{
  *   dataDir: string,
  *   clock?: () => number,
+ *   stateDocuments?: import("../storage/documents.mjs").StateDocuments,
  * }} options
  */
 function createFileNotificationStore(options) {
   const dataDir = options.dataDir;
+  const stateDocuments =
+    options.stateDocuments || createFileStateDocuments({ dataDir });
   const clock = options.clock || (() => Date.now());
 
   /** @type {Map<string, StoredNotice>} */
@@ -64,12 +63,11 @@ function createFileNotificationStore(options) {
   let loaded = false;
   let writeQueue = Promise.resolve();
 
-  const NOTICES_FILE = path.join(dataDir, "notifications.json");
+  const NOTICES_FILE = "notifications.json";
 
   function ensureLoaded() {
     if (loaded) return;
     loaded = true;
-    fs.mkdirSync(dataDir, { recursive: true });
     const stored = readStoreFile(NOTICES_FILE, { notices: [] });
     for (const notice of /** @type {StoredNotice[]} */ (stored.notices || [])) {
       noticesById.set(notice.notificationId, notice);
@@ -83,16 +81,8 @@ function createFileNotificationStore(options) {
    * @returns {T}
    */
   function readStoreFile(filePath, fallback) {
-    let contents;
-    try {
-      contents = fs.readFileSync(filePath, "utf8");
-    } catch (error) {
-      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") {
-        return fallback;
-      }
-      throw error;
-    }
-    const parsed = JSON.parse(contents);
+    const parsed = /** @type {any} */ (stateDocuments.read(filePath, fallback));
+    if (parsed === fallback) return fallback;
     if (parsed.version !== STORE_FORMAT_VERSION) {
       throw new Error(
         `Unsupported hosted notification store format in ${filePath}`,
@@ -127,24 +117,15 @@ function createFileNotificationStore(options) {
    * @returns {Promise<void>}
    */
   async function persistNow() {
-    fs.mkdirSync(dataDir, { recursive: true });
-    await writeStoreFile(NOTICES_FILE, {
-      version: STORE_FORMAT_VERSION,
-      notices: [...noticesById.values()],
-    });
-  }
-
-  /**
-   * @param {string} filePath
-   * @param {unknown} payload
-   * @returns {Promise<void>}
-   */
-  async function writeStoreFile(filePath, payload) {
-    const temporaryPath = `${filePath}.tmp-${process.pid}-${crypto
-      .randomBytes(4)
-      .toString("hex")}`;
-    await fs.promises.writeFile(temporaryPath, JSON.stringify(payload), "utf8");
-    await fs.promises.rename(temporaryPath, filePath);
+    await stateDocuments.writeMany([
+      {
+        key: NOTICES_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          notices: [...noticesById.values()],
+        },
+      },
+    ]);
   }
 
   /**
@@ -344,6 +325,11 @@ function createFileNotificationStore(options) {
     await enqueueWrite(persistNow);
   }
 
+  async function flush() {
+    ensureLoaded();
+    await writeQueue;
+  }
+
   return {
     enqueue,
     enqueueMany,
@@ -351,6 +337,7 @@ function createFileNotificationStore(options) {
     listRetrying,
     markSent,
     markFailed,
+    flush,
   };
 }
 

@@ -1,9 +1,8 @@
 import crypto from "node:crypto";
-import * as fs from "node:fs";
-import * as path from "node:path";
 
 import observability from "../../observability/index.mjs";
 import { createFileBoardArchiveStore } from "../archive/store.mjs";
+import { createFileStateDocuments } from "../storage/documents.mjs";
 import {
   IMPORT_FAILURE_CODES,
   importLegacySvgCanvas,
@@ -92,10 +91,13 @@ function cleanSourceLabel(value) {
  *   clock?: () => number,
  *   archiveStore?: ReturnType<typeof createFileBoardArchiveStore>,
  *   organizerStore: ReturnType<typeof import("../organizers/store.mjs").createFileOrganizerStore>,
+ *   stateDocuments?: import("../storage/documents.mjs").StateDocuments,
  * }} options
  */
 function createFileHistoricalArchiveStore(options) {
   const dataDir = options.dataDir;
+  const stateDocuments =
+    options.stateDocuments || createFileStateDocuments({ dataDir });
   const clock = options.clock || (() => Date.now());
   const archiveStore =
     options.archiveStore || createFileBoardArchiveStore({ dataDir });
@@ -106,21 +108,16 @@ function createFileHistoricalArchiveStore(options) {
   let loaded = false;
   let writeQueue = Promise.resolve();
 
-  const IMPORTS_FILE = path.join(dataDir, "historical_archives.json");
+  const IMPORTS_FILE = "historical_archives.json";
 
   function ensureLoaded() {
     if (loaded) return;
     loaded = true;
-    fs.mkdirSync(dataDir, { recursive: true });
-    let stored;
-    try {
-      stored = JSON.parse(fs.readFileSync(IMPORTS_FILE, "utf8"));
-    } catch (error) {
-      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") {
-        return;
-      }
-      throw error;
-    }
+    const fallback = { imports: [] };
+    const stored = /** @type {any} */ (
+      stateDocuments.read(IMPORTS_FILE, fallback)
+    );
+    if (stored === fallback) return;
     if (stored.version !== STORE_FORMAT_VERSION) {
       throw new Error(
         `Unsupported hosted historical archive store format in ${IMPORTS_FILE}`,
@@ -159,19 +156,12 @@ function createFileHistoricalArchiveStore(options) {
    * @returns {Promise<void>}
    */
   async function persistNow() {
-    fs.mkdirSync(dataDir, { recursive: true });
-    const temporaryPath = `${IMPORTS_FILE}.tmp-${process.pid}-${crypto
-      .randomBytes(4)
-      .toString("hex")}`;
-    await fs.promises.writeFile(
-      temporaryPath,
-      JSON.stringify({
-        version: STORE_FORMAT_VERSION,
-        imports,
-      }),
-      "utf8",
-    );
-    await fs.promises.rename(temporaryPath, IMPORTS_FILE);
+    await stateDocuments.writeMany([
+      {
+        key: IMPORTS_FILE,
+        payload: { version: STORE_FORMAT_VERSION, imports },
+      },
+    ]);
   }
 
   /**

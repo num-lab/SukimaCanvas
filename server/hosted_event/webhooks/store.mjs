@@ -1,8 +1,7 @@
 import crypto from "node:crypto";
-import * as fs from "node:fs";
-import * as path from "node:path";
 
 import observability from "../../observability/index.mjs";
+import { createFileStateDocuments } from "../storage/documents.mjs";
 
 const { logger } = observability;
 
@@ -121,10 +120,9 @@ function isValidWebhookUrl(url, options = {}) {
 
 /**
  * Durable storage for Organizer Webhook Subscriptions and the signed-event
- * outbox that drives their at-least-once delivery, in JSON files under the
- * shared hosted data directory exactly like the other hosted stores: reads
- * come from an in-memory index loaded on first use, and every mutation is
- * appended to a serialized write queue with atomic file replacement.
+ * outbox that drives their at-least-once delivery. Reads come from an in-memory
+ * index loaded on first use, and every mutation replaces state documents
+ * through the selected durable adapter.
  *
  * The subscription secret is stored raw because the platform itself needs it
  * to sign every delivery; it is revealed to the Owner exactly once (on
@@ -138,16 +136,19 @@ function isValidWebhookUrl(url, options = {}) {
  *   clock?: () => number,
  *   randomId?: () => string,
  *   allowInsecureHttp?: boolean,
+ *   stateDocuments?: import("../storage/documents.mjs").StateDocuments,
  * }} options
  */
 function createFileWebhookStore(options) {
   const dataDir = options.dataDir;
+  const stateDocuments =
+    options.stateDocuments || createFileStateDocuments({ dataDir });
   const clock = options.clock || (() => Date.now());
   const randomId = options.randomId || (() => crypto.randomUUID());
   const allowInsecureHttp = options.allowInsecureHttp === true;
 
-  const SUBSCRIPTIONS_FILE = path.join(dataDir, "webhooks.json");
-  const OUTBOX_FILE = path.join(dataDir, "webhook_outbox.json");
+  const SUBSCRIPTIONS_FILE = "webhooks.json";
+  const OUTBOX_FILE = "webhook_outbox.json";
 
   /** @type {Map<string, StoredWebhookSubscription>} */
   const subscriptionsById = new Map();
@@ -161,7 +162,6 @@ function createFileWebhookStore(options) {
   function ensureLoaded() {
     if (loaded) return;
     loaded = true;
-    fs.mkdirSync(dataDir, { recursive: true });
     const subscriptions = readStoreFile(SUBSCRIPTIONS_FILE, {
       subscriptions: [],
     });
@@ -186,16 +186,8 @@ function createFileWebhookStore(options) {
    * @returns {T}
    */
   function readStoreFile(filePath, fallback) {
-    let contents;
-    try {
-      contents = fs.readFileSync(filePath, "utf8");
-    } catch (error) {
-      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") {
-        return fallback;
-      }
-      throw error;
-    }
-    const parsed = JSON.parse(contents);
+    const parsed = /** @type {any} */ (stateDocuments.read(filePath, fallback));
+    if (parsed === fallback) return fallback;
     if (parsed.version !== STORE_FORMAT_VERSION) {
       throw new Error(`Unsupported hosted webhook store format in ${filePath}`);
     }
@@ -228,28 +220,22 @@ function createFileWebhookStore(options) {
    * @returns {Promise<void>}
    */
   async function persistNow() {
-    fs.mkdirSync(dataDir, { recursive: true });
-    await writeStoreFile(SUBSCRIPTIONS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      subscriptions: [...subscriptionsById.values()],
-    });
-    await writeStoreFile(OUTBOX_FILE, {
-      version: STORE_FORMAT_VERSION,
-      entries: [...entriesById.values()],
-    });
-  }
-
-  /**
-   * @param {string} filePath
-   * @param {unknown} payload
-   * @returns {Promise<void>}
-   */
-  async function writeStoreFile(filePath, payload) {
-    const temporaryPath = `${filePath}.tmp-${process.pid}-${crypto
-      .randomBytes(4)
-      .toString("hex")}`;
-    await fs.promises.writeFile(temporaryPath, JSON.stringify(payload), "utf8");
-    await fs.promises.rename(temporaryPath, filePath);
+    await stateDocuments.writeMany([
+      {
+        key: SUBSCRIPTIONS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          subscriptions: [...subscriptionsById.values()],
+        },
+      },
+      {
+        key: OUTBOX_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          entries: [...entriesById.values()],
+        },
+      },
+    ]);
   }
 
   /**

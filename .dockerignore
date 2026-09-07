@@ -1,4 +1,5 @@
 node_modules
+.env*
 wbo-backups
 tests_output
 wbo-backup.tgz
@@ -15,7 +16,7 @@ AUTHORS
 LICENSE
 nightwatch.conf.js
 README.md
-docker-compose.yml
+docker-compose*.yml
 .git
 .github
 .gitignore

@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
-import * as fs from "node:fs";
-import * as path from "node:path";
 import observability from "../../observability/index.mjs";
+import { createFileStateDocuments } from "../storage/documents.mjs";
 import { isValidNormalizedEmail, normalizeEmail } from "./emails.mjs";
 
 const { logger } = observability;
@@ -167,11 +166,10 @@ function createSingleUseTokenTable(options) {
 /**
  * Durable account storage for the Hosted Event Service.
  *
- * The first release keeps business state in JSON files under one data
- * directory; this store is the only seam that touches them. Reads are served
- * from an in-memory index loaded synchronously on first use, and every
- * mutation is appended to a serialized write queue with atomic file
- * replacement. Verification tokens and session ids are persisted only as
+ * Reads are served from an in-memory index loaded synchronously on first use,
+ * and every mutation is appended to a serialized queue that replaces the
+ * store's state documents through the selected file or PostgreSQL adapter.
+ * Verification tokens and session ids are persisted only as
  * SHA-256 digests; raw values exist solely in the verification email and the
  * browser cookie.
  *
@@ -183,10 +181,13 @@ function createSingleUseTokenTable(options) {
  *   verificationTokenTtlMs?: number,
  *   passwordResetTtlMs?: number,
  *   randomToken?: () => string,
+ *   stateDocuments?: import("../storage/documents.mjs").StateDocuments,
  * }} options
  */
 function createFileAccountStore(options) {
   const dataDir = options.dataDir;
+  const stateDocuments =
+    options.stateDocuments || createFileStateDocuments({ dataDir });
   const clock = options.clock || (() => Date.now());
   const sessionMaxAgeMs = positiveOr(
     options.sessionMaxAgeMs,
@@ -213,15 +214,14 @@ function createFileAccountStore(options) {
   let loaded = false;
   let writeQueue = Promise.resolve();
 
-  const ACCOUNTS_FILE = path.join(dataDir, "accounts.json");
-  const VERIFICATIONS_FILE = path.join(dataDir, "verifications.json");
-  const RESETS_FILE = path.join(dataDir, "resets.json");
-  const SESSIONS_FILE = path.join(dataDir, "sessions.json");
+  const ACCOUNTS_FILE = "accounts.json";
+  const VERIFICATIONS_FILE = "verifications.json";
+  const RESETS_FILE = "resets.json";
+  const SESSIONS_FILE = "sessions.json";
 
   function ensureLoaded() {
     if (loaded) return;
     loaded = true;
-    fs.mkdirSync(dataDir, { recursive: true });
     const accounts = readStoreFile(ACCOUNTS_FILE, { accounts: [] });
     for (const account of /** @type {StoredAccount[]} */ (
       accounts.accounts || []
@@ -269,16 +269,8 @@ function createFileAccountStore(options) {
    * @returns {T}
    */
   function readStoreFile(filePath, fallback) {
-    let contents;
-    try {
-      contents = fs.readFileSync(filePath, "utf8");
-    } catch (error) {
-      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") {
-        return fallback;
-      }
-      throw error;
-    }
-    const parsed = JSON.parse(contents);
+    const parsed = /** @type {any} */ (stateDocuments.read(filePath, fallback));
+    if (parsed === fallback) return fallback;
     if (parsed.version !== STORE_FORMAT_VERSION) {
       throw new Error(`Unsupported hosted account store format in ${filePath}`);
     }
@@ -321,36 +313,36 @@ function createFileAccountStore(options) {
     for (const [sessionDigest, session] of sessionsByDigest) {
       if (session.expiresAtMs <= now) sessionsByDigest.delete(sessionDigest);
     }
-    fs.mkdirSync(dataDir, { recursive: true });
-    await writeStoreFile(ACCOUNTS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      accounts: [...accountsById.values()],
-    });
-    await writeStoreFile(VERIFICATIONS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      tokens: Object.fromEntries(verificationTokens.tokens()),
-    });
-    await writeStoreFile(RESETS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      tokens: Object.fromEntries(resetTokens.tokens()),
-    });
-    await writeStoreFile(SESSIONS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      sessions: Object.fromEntries(sessionsByDigest),
-    });
-  }
-
-  /**
-   * @param {string} filePath
-   * @param {unknown} payload
-   * @returns {Promise<void>}
-   */
-  async function writeStoreFile(filePath, payload) {
-    const temporaryPath = `${filePath}.tmp-${process.pid}-${crypto
-      .randomBytes(4)
-      .toString("hex")}`;
-    await fs.promises.writeFile(temporaryPath, JSON.stringify(payload), "utf8");
-    await fs.promises.rename(temporaryPath, filePath);
+    await stateDocuments.writeMany([
+      {
+        key: ACCOUNTS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          accounts: [...accountsById.values()],
+        },
+      },
+      {
+        key: VERIFICATIONS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          tokens: Object.fromEntries(verificationTokens.tokens()),
+        },
+      },
+      {
+        key: RESETS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          tokens: Object.fromEntries(resetTokens.tokens()),
+        },
+      },
+      {
+        key: SESSIONS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          sessions: Object.fromEntries(sessionsByDigest),
+        },
+      },
+    ]);
   }
 
   /**

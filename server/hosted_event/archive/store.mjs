@@ -5,12 +5,11 @@ import path from "node:path";
 /**
  * Object storage for Private Board Archives.
  *
- * This is the first production adapter behind the archive storage contract:
- * objects live as files under `<WBO_HOSTED_DATA_DIR>/board-archives/<key>`, so
- * an S3-compatible adapter can replace it without touching the close
- * pipeline. The contract is deliberately small — put, read, list, delete.
- * Archives are write-once results that only the platform's own authorized
- * surfaces ever consume.
+ * Local adapter behind the archive storage contract. Objects live as files
+ * under `<WBO_HOSTED_DATA_DIR>/board-archives/<key>`; production selects the
+ * S3-compatible adapter without touching the close pipeline. The contract is
+ * deliberately small — put, read, list, delete. Archives are write-once
+ * results that only the platform's own authorized surfaces ever consume.
  *
  * Immutability contract: the content stored under a key can never change. A
  * put against an existing key with different content is refused; re-putting
@@ -67,6 +66,7 @@ function assertSafeArchiveKey(key) {
  *   dataDir: string,
  * }} dependencies
  * @returns {{
+ *   initialize: () => Promise<void>,
  *   putArchive: (key: string, content: string | Uint8Array) => Promise<void>,
  *   readArchive: (key: string) => Promise<Buffer | null>,
  *   listObjectKeys: (prefix: string) => Promise<string[]>,
@@ -75,6 +75,8 @@ function assertSafeArchiveKey(key) {
  */
 function createFileBoardArchiveStore(dependencies) {
   const root = path.join(dependencies.dataDir, "board-archives");
+
+  async function initialize() {}
 
   /**
    * Stores one archive object under its key, atomically (temp file + rename)
@@ -182,7 +184,11 @@ function createFileBoardArchiveStore(dependencies) {
     await fsp.rm(path.join(root, key), { force: true });
   }
 
-  return { putArchive, readArchive, listObjectKeys, deleteObject };
+  return { initialize, putArchive, readArchive, listObjectKeys, deleteObject };
 }
 
-export { createFileBoardArchiveStore };
+export {
+  assertSafeArchiveKey,
+  createArchiveExistsError,
+  createFileBoardArchiveStore,
+};

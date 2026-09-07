@@ -1,8 +1,7 @@
 import crypto from "node:crypto";
-import * as fs from "node:fs";
-import * as path from "node:path";
 
 import observability from "../../observability/index.mjs";
+import { createFileStateDocuments } from "../storage/documents.mjs";
 
 const { logger } = observability;
 
@@ -74,10 +73,13 @@ function isModerationAction(action) {
  *   dataDir: string,
  *   clock?: () => number,
  *   randomId?: () => string,
+ *   stateDocuments?: import("../storage/documents.mjs").StateDocuments,
  * }} options
  */
 function createFileModerationStore(options) {
   const dataDir = options.dataDir;
+  const stateDocuments =
+    options.stateDocuments || createFileStateDocuments({ dataDir });
   const clock = options.clock || (() => Date.now());
   const randomId = options.randomId || (() => crypto.randomUUID());
 
@@ -86,12 +88,11 @@ function createFileModerationStore(options) {
   let loaded = false;
   let writeQueue = Promise.resolve();
 
-  const LOG_FILE = path.join(dataDir, "moderation_log.json");
+  const LOG_FILE = "moderation_log.json";
 
   function ensureLoaded() {
     if (loaded) return;
     loaded = true;
-    fs.mkdirSync(dataDir, { recursive: true });
     const stored = readStoreFile(LOG_FILE, { records: [] });
     for (const record of /** @type {StoredModerationRecord[]} */ (
       stored.records || []
@@ -107,16 +108,8 @@ function createFileModerationStore(options) {
    * @returns {T}
    */
   function readStoreFile(filePath, fallback) {
-    let contents;
-    try {
-      contents = fs.readFileSync(filePath, "utf8");
-    } catch (error) {
-      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") {
-        return fallback;
-      }
-      throw error;
-    }
-    const parsed = JSON.parse(contents);
+    const parsed = /** @type {any} */ (stateDocuments.read(filePath, fallback));
+    if (parsed === fallback) return fallback;
     if (parsed.version !== STORE_FORMAT_VERSION) {
       throw new Error(`Unsupported moderation log format in ${filePath}`);
     }
@@ -153,16 +146,12 @@ function createFileModerationStore(options) {
    * @returns {Promise<void>}
    */
   async function persistNow() {
-    fs.mkdirSync(dataDir, { recursive: true });
-    const temporaryPath = `${LOG_FILE}.tmp-${process.pid}-${crypto
-      .randomBytes(4)
-      .toString("hex")}`;
-    await fs.promises.writeFile(
-      temporaryPath,
-      JSON.stringify({ version: STORE_FORMAT_VERSION, records }),
-      "utf8",
-    );
-    await fs.promises.rename(temporaryPath, LOG_FILE);
+    await stateDocuments.writeMany([
+      {
+        key: LOG_FILE,
+        payload: { version: STORE_FORMAT_VERSION, records },
+      },
+    ]);
   }
 
   /**

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import observability from "../../observability/index.mjs";
+import { createFileStateDocuments } from "../storage/documents.mjs";
 
 const { logger } = observability;
 
@@ -56,9 +57,9 @@ function deriveDownloadToken(hmacKey, exportId, finishedAtMs) {
 /**
  * Durable storage for Board Image Export jobs and their PNG results.
  *
- * Following the brand-asset store, job metadata is a JSON index under one data
- * directory and the rendered PNG bytes are opaque files beside it — outside
- * the static web root, so the only read path is the authorized download route.
+ * Job metadata uses the selected state-document adapter and rendered PNG bytes
+ * use the selected private object adapter or local opaque files. The only read
+ * path is the authorized download route.
  * The download URL carries the export id plus an HMAC-derived token that must
  * still be presented by an authorized organizer member, and it stops working
  * the moment the export's link is revoked or the export deleted.
@@ -73,17 +74,22 @@ function deriveDownloadToken(hmacKey, exportId, finishedAtMs) {
  *   randomId?: () => string,
  *   linkTtlMs: number,
  *   hmacKey: string,
+ *   stateDocuments?: import("../storage/documents.mjs").StateDocuments,
+ *   objectStore?: ReturnType<typeof import("../archive/store.mjs").createFileBoardArchiveStore>,
  * }} options
  */
 function createFileBoardExportStore(options) {
   const dataDir = options.dataDir;
+  const stateDocuments =
+    options.stateDocuments || createFileStateDocuments({ dataDir });
+  const objectStore = options.objectStore || null;
   const clock = options.clock || (() => Date.now());
   const randomId =
     options.randomId || (() => crypto.randomBytes(12).toString("base64url"));
   const linkTtlMs = options.linkTtlMs;
   const hmacKey = options.hmacKey;
   const exportsDir = path.join(dataDir, "board-exports");
-  const INDEX_FILE = path.join(exportsDir, "index.json");
+  const INDEX_FILE = "board-exports/index.json";
 
   /** @type {Map<string, StoredBoardExport>} */
   const exportsById = new Map();
@@ -93,17 +99,11 @@ function createFileBoardExportStore(options) {
   function ensureLoaded() {
     if (loaded) return;
     loaded = true;
-    fs.mkdirSync(exportsDir, { recursive: true });
-    let contents;
-    try {
-      contents = fs.readFileSync(INDEX_FILE, "utf8");
-    } catch (error) {
-      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") {
-        return;
-      }
-      throw error;
-    }
-    const parsed = JSON.parse(contents);
+    const fallback = { exports: [] };
+    const parsed = /** @type {any} */ (
+      stateDocuments.read(INDEX_FILE, fallback)
+    );
+    if (parsed === fallback) return;
     if (parsed.version !== STORE_FORMAT_VERSION) {
       throw new Error(`Unsupported hosted board export store format`);
     }
@@ -120,6 +120,11 @@ function createFileBoardExportStore(options) {
    */
   function bytesPath(exportId) {
     return path.join(exportsDir, `${exportId}.png`);
+  }
+
+  /** @param {string} exportId */
+  function objectKey(exportId) {
+    return `image-exports/${exportId}.png`;
   }
 
   /**
@@ -148,19 +153,15 @@ function createFileBoardExportStore(options) {
    * @returns {Promise<void>}
    */
   async function persistIndexNow() {
-    fs.mkdirSync(exportsDir, { recursive: true });
-    const temporaryPath = `${INDEX_FILE}.tmp-${process.pid}-${crypto
-      .randomBytes(4)
-      .toString("hex")}`;
-    await fs.promises.writeFile(
-      temporaryPath,
-      JSON.stringify({
-        version: STORE_FORMAT_VERSION,
-        exports: [...exportsById.values()],
-      }),
-      "utf8",
-    );
-    await fs.promises.rename(temporaryPath, INDEX_FILE);
+    await stateDocuments.writeMany([
+      {
+        key: INDEX_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          exports: [...exportsById.values()],
+        },
+      },
+    ]);
   }
 
   /**
@@ -351,12 +352,17 @@ function createFileBoardExportStore(options) {
     if (record.status !== "processing") {
       return { ok: false, reason: "not_processing" };
     }
-    const bytesPathForRecord = `${bytesPath(record.exportId)}`;
-    const temporaryPath = `${bytesPathForRecord}.tmp-${process.pid}-${crypto
-      .randomBytes(4)
-      .toString("hex")}`;
-    await fs.promises.writeFile(temporaryPath, input.bytes);
-    await fs.promises.rename(temporaryPath, bytesPathForRecord);
+    if (objectStore) {
+      await objectStore.putArchive(objectKey(record.exportId), input.bytes);
+    } else {
+      await fs.promises.mkdir(exportsDir, { recursive: true });
+      const bytesPathForRecord = `${bytesPath(record.exportId)}`;
+      const temporaryPath = `${bytesPathForRecord}.tmp-${process.pid}-${crypto
+        .randomBytes(4)
+        .toString("hex")}`;
+      await fs.promises.writeFile(temporaryPath, input.bytes);
+      await fs.promises.rename(temporaryPath, bytesPathForRecord);
+    }
     const now = clock();
     record.status = "succeeded";
     record.finishedAtMs = now;
@@ -520,7 +526,11 @@ function createFileBoardExportStore(options) {
     exportsById.delete(record.exportId);
     await enqueueWrite(async () => {
       await persistIndexNow();
-      await fs.promises.rm(bytesPath(record.exportId), { force: true });
+      if (objectStore) {
+        await objectStore.deleteObject(objectKey(record.exportId));
+      } else {
+        await fs.promises.rm(bytesPath(record.exportId), { force: true });
+      }
     });
     return { ok: true };
   }
@@ -551,7 +561,11 @@ function createFileBoardExportStore(options) {
       await enqueueWrite(async () => {
         await persistIndexNow();
         for (const record of removed) {
-          await fs.promises.rm(bytesPath(record.exportId), { force: true });
+          if (objectStore) {
+            await objectStore.deleteObject(objectKey(record.exportId));
+          } else {
+            await fs.promises.rm(bytesPath(record.exportId), { force: true });
+          }
         }
       });
     }
@@ -582,7 +596,11 @@ function createFileBoardExportStore(options) {
       await enqueueWrite(async () => {
         await persistIndexNow();
         for (const record of removed) {
-          await fs.promises.rm(bytesPath(record.exportId), { force: true });
+          if (objectStore) {
+            await objectStore.deleteObject(objectKey(record.exportId));
+          } else {
+            await fs.promises.rm(bytesPath(record.exportId), { force: true });
+          }
         }
       });
     }
@@ -601,7 +619,9 @@ function createFileBoardExportStore(options) {
       return null;
     }
     try {
-      return await fs.promises.readFile(bytesPath(record.exportId));
+      return objectStore
+        ? await objectStore.readArchive(objectKey(record.exportId))
+        : await fs.promises.readFile(bytesPath(record.exportId));
     } catch (error) {
       logger.error("hosted_board_export_store.read_failed", {
         error,

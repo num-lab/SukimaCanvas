@@ -78,6 +78,18 @@ future Hosted Event behavior has one composition seam.
 source disclosure inputs; they are intentionally not inferred from a mutable
 branch or the local working tree.
 
+Hosted durability is selected once in
+[storage/index.mjs](./server/hosted_event/storage/index.mjs). Production uses
+`WBO_HOSTED_STATE_STORE=postgres`: mutable stores keep synchronous in-memory
+indexes loaded before listen and transactionally replace versioned JSONB
+documents through [storage/postgres.mjs](./server/hosted_event/storage/postgres.mjs),
+which also holds an advisory lock enforcing one active instance. Production
+uses `WBO_HOSTED_OBJECT_STORE=s3` with the private, S3-compatible adapter in
+[archive/s3_store.mjs](./server/hosted_event/archive/s3_store.mjs); Cloudflare
+R2 configuration is deployment-owned. File adapters remain the local/test
+fallback. See `docs/operations/deployment.md` for the exact configuration and
+the `npm run check:hosted-storage` startup preflight.
+
 In hosted mode, accounts live under
 [hosted_event/accounts/](./server/hosted_event/accounts/): `store.mjs` owns the
 durable account/session/verification-token/password-reset-token state
@@ -107,7 +119,7 @@ files in `WBO_HOSTED_MAIL_OUTBOX_DIR` (default
 responses, logs, and emails must never carry passwords, password hashes, or
 verification tokens; hosted pages are session-aware and therefore `no-store`
 with `Referrer-Policy: no-referrer`. Hosted account limits and timeouts are
-configured with `WBO_HOSTED_DATA_DIR`, `WBO_HOSTED_SESSION_MAX_AGE_MS`,
+configured with `WBO_HOSTED_SESSION_MAX_AGE_MS`,
 `WBO_HOSTED_SESSION_IDLE_TIMEOUT_MS`, `WBO_HOSTED_VERIFICATION_TOKEN_TTL_MS`,
 `WBO_HOSTED_PASSWORD_RESET_TTL_MS`, and the `WBO_HOSTED_REGISTER_ATTEMPTS_*` /
 `WBO_HOSTED_LOGIN_ATTEMPTS_*` / `WBO_HOSTED_FORGOT_ATTEMPTS_*` pairs. The
@@ -425,10 +437,9 @@ hydrate ledger entries newer than the snapshot sequence
 Session's lifetime (retention is later work building on it), and ledger
 corruption or a replay gap fails the load instead of silently diverging.
 An unreadable stored SVG is quarantined with `svg.snapshot_unreadable_quarantined`
-and recovery continues from the backup or the ledger rebuild; a torn
-final ledger line (a crash mid-append) is dropped on read and the append
-boundary is repaired before the next append so the torn bytes are never
-buried mid-file.
+and recovery continues from the backup or the ledger rebuild. The file ledger
+fallback additionally drops a torn final JSONL line and repairs the append
+boundary before the next append.
 [svg_board_store.mjs](./server/persistence/svg_board_store.mjs)
 reads served baselines, loads canonical board state, writes fresh SVGs, and
 rewrites existing SVGs. It relies on
@@ -443,15 +454,12 @@ for legacy JSON conversion. Persistence paths and timing are configured through
 `WBO_SEQ_REPLAY_RETENTION_MS`. Board moderators are configured with
 `WBO_BOARD_MODERATORS` as space-separated `board:secret[,secret]` groups.
 
-The durable mutation ledger lives under
-[hosted_event/ledger/](./server/hosted_event/ledger/) with one JSONL file per
-board in `<WBO_HOSTED_DATA_DIR>/mutation-ledger/<board>.jsonl`; each entry
-carries `seq`, `acceptedAtMs`, `eventId`, `boardSessionId`, the internal
-`accountId`, and the full attributed mutation. The board layer reaches it
-through the factory seam in
-[ledger_registry.mjs](./server/board/ledger_registry.mjs), which the hosted
-module registers at composition — a future PostgreSQL adapter slots in
-without touching the acceptance flow.
+The durable mutation ledger reaches its selected adapter through the factory
+seam in [ledger_registry.mjs](./server/board/ledger_registry.mjs). Production
+stores ordered rows in PostgreSQL `wbo_board_mutation_ledger`; the file
+fallback in [hosted_event/ledger/](./server/hosted_event/ledger/) stores one
+JSONL file per board. Every entry carries `seq`, `acceptedAtMs`, `eventId`,
+`boardSessionId`, the internal `accountId`, and the full attributed mutation.
 
 Board Session closing is owned by the close pipeline in
 [hosted_event/archive/close.mjs](./server/hosted_event/archive/close.mjs),
@@ -476,9 +484,11 @@ operator console (`retryBoardSessionArchive`, POST
 `/operator/board-sessions/{boardSessionId}/archive-retry`), which lists
 failed work with its failure context. A close is never faked: the read-only
 completion notification is sent only when the session actually sealed.
-Archive objects live under `<WBO_HOSTED_DATA_DIR>/board-archives/` via
-[archive/store.mjs](./server/hosted_event/archive/store.mjs), whose keys are
-internal and never public access credentials. A sealed session cannot be
+Archive objects use the selected immutable store: private R2 keys in production
+through [archive/s3_store.mjs](./server/hosted_event/archive/s3_store.mjs), or
+`<WBO_HOSTED_DATA_DIR>/board-archives/` through
+[archive/store.mjs](./server/hosted_event/archive/store.mjs) in file mode. Keys
+are internal and never public access credentials. A sealed session cannot be
 re-edited or reopened; its connected sockets end on a read-only completion
 state (`BOARDSTATE` carrying `eventClosed: true`, demoted to reader) and
 reconnects are refused by admission. Empty Board Sessions archive the same
@@ -525,8 +535,9 @@ so attribution, Participant Identifiers, audit data, or object keys can never
 appear in the output. Oversized or unrenderable content fails deterministically
 (`archive_unavailable`, `archive_invalid`, `render_failed`,
 `output_limit_exceeded`, `output_metadata_rejected`, `storage_write_failed`).
-Job records and PNG bytes live under `<WBO_HOSTED_DATA_DIR>/board-exports/`
-via [export/store.mjs](./server/hosted_event/export/store.mjs); jobs survive
+Job records live in the selected state store and successful PNG bytes under
+`image-exports/` in the selected object store via
+[export/store.mjs](./server/hosted_event/export/store.mjs); jobs survive
 restarts (`processing` jobs are re-queued), retry failed renders up to three
 attempts paced by `WBO_HOSTED_BOARD_EXPORT_RETRY_MS`, and then stay settled —
 repeated passes never re-run succeeded work. Export passes are kicked on the
@@ -540,7 +551,7 @@ on revoke or delete.
 Outcome retention, early deletion, and expiry purge live under
 [hosted_event/outcomes.mjs](./server/hosted_event/outcomes.mjs): a sealed
 Board Session's Private Board Archive, the Item Attribution inside its canvas,
-its Change Audit (the durable mutation ledger file), the event's Published
+its Change Audit (the durable mutation ledger), the event's Published
 Canvas, and its Board Image Export objects are retained for
 `WBO_HOSTED_OUTCOME_RETENTION_MS` (90 days from the archive seal, `0`
 disables expiry purges) and then purged together by one idempotent,
@@ -615,8 +626,8 @@ fabrication. Imports are idempotent by construction: the import id derives
 from the target Organizer plus the source digest, a crashed import is
 completed (never duplicated) by re-importing, and a completed import refuses
 the same source deterministically; every attempt, outcome, and failure reason
-is recorded in `historical_archives.json` and audited only on the operator
-console. There is no history-directory scan, no batch migration, no
+is recorded in the Historical Archive state document and audited only on the
+operator console. There is no history-directory scan, no batch migration, no
 Event/Reservation creation, and no path that reopens a Historical Archive as
 a Board Session; retention never enumerates the `historical-archives/` key
 namespace.

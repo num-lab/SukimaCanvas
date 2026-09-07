@@ -1,6 +1,4 @@
 import crypto from "node:crypto";
-import * as fs from "node:fs";
-import * as path from "node:path";
 
 import observability from "../../observability/index.mjs";
 import {
@@ -8,6 +6,7 @@ import {
   generateAccessCode,
   normalizeAccessCode,
 } from "../memberships/access_codes.mjs";
+import { createFileStateDocuments } from "../storage/documents.mjs";
 
 const { logger } = observability;
 
@@ -343,10 +342,10 @@ function computeCapacityPeak(windowStartMs, windowEndMs, seats, allocations) {
  * Durable storage for Organizer Applications, Organizers, their role grants,
  * and the Change Audit of administrative actions.
  *
- * The first release keeps this business state in JSON files under one data
- * directory, exactly like the account store: reads come from an in-memory index
- * loaded on first use, and every mutation is appended to a serialized write
- * queue with atomic file replacement. State-machine transitions (submit,
+ * Like the account store, reads come from an in-memory index loaded on first
+ * use and every mutation is appended to a serialized queue that replaces the
+ * store's state documents through the selected adapter. State-machine
+ * transitions (submit,
  * approve, reject) run their check-and-mutate synchronously before yielding, so
  * concurrent approvals cannot create a second Organizer or duplicate roles.
  *
@@ -355,10 +354,13 @@ function computeCapacityPeak(windowStartMs, windowEndMs, seats, allocations) {
  *   clock?: () => number,
  *   randomId?: () => string,
  *   invitationTtlMs?: number,
+ *   stateDocuments?: import("../storage/documents.mjs").StateDocuments,
  * }} options
  */
 function createFileOrganizerStore(options) {
   const dataDir = options.dataDir;
+  const stateDocuments =
+    options.stateDocuments || createFileStateDocuments({ dataDir });
   const clock = options.clock || (() => Date.now());
   const randomId = options.randomId || (() => crypto.randomUUID());
   const invitationTtlMs =
@@ -397,19 +399,16 @@ function createFileOrganizerStore(options) {
   let loaded = false;
   let writeQueue = Promise.resolve();
 
-  const APPLICATIONS_FILE = path.join(dataDir, "organizer_applications.json");
-  const ORGANIZERS_FILE = path.join(dataDir, "organizers.json");
-  const ROLES_FILE = path.join(dataDir, "organizer_roles.json");
-  const INVITATIONS_FILE = path.join(dataDir, "organizer_invitations.json");
-  const RESERVATIONS_FILE = path.join(dataDir, "reservations.json");
-  const EVENTS_FILE = path.join(dataDir, "events.json");
-  const BOARD_SESSIONS_FILE = path.join(dataDir, "board_sessions.json");
-  const CHANGE_REQUESTS_FILE = path.join(
-    dataDir,
-    "reservation_change_requests.json",
-  );
-  const EVENT_MODERATORS_FILE = path.join(dataDir, "event_moderators.json");
-  const AUDIT_FILE = path.join(dataDir, "change_audit.json");
+  const APPLICATIONS_FILE = "organizer_applications.json";
+  const ORGANIZERS_FILE = "organizers.json";
+  const ROLES_FILE = "organizer_roles.json";
+  const INVITATIONS_FILE = "organizer_invitations.json";
+  const RESERVATIONS_FILE = "reservations.json";
+  const EVENTS_FILE = "events.json";
+  const BOARD_SESSIONS_FILE = "board_sessions.json";
+  const CHANGE_REQUESTS_FILE = "reservation_change_requests.json";
+  const EVENT_MODERATORS_FILE = "event_moderators.json";
+  const AUDIT_FILE = "change_audit.json";
 
   /**
    * @param {string} organizerId
@@ -463,7 +462,6 @@ function createFileOrganizerStore(options) {
   function ensureLoaded() {
     if (loaded) return;
     loaded = true;
-    fs.mkdirSync(dataDir, { recursive: true });
     const applications = readStoreFile(APPLICATIONS_FILE, { applications: [] });
     for (const application of /** @type {StoredApplication[]} */ (
       applications.applications || []
@@ -572,16 +570,8 @@ function createFileOrganizerStore(options) {
    * @returns {T}
    */
   function readStoreFile(filePath, fallback) {
-    let contents;
-    try {
-      contents = fs.readFileSync(filePath, "utf8");
-    } catch (error) {
-      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") {
-        return fallback;
-      }
-      throw error;
-    }
-    const parsed = JSON.parse(contents);
+    const parsed = /** @type {any} */ (stateDocuments.read(filePath, fallback));
+    if (parsed === fallback) return fallback;
     if (parsed.version !== STORE_FORMAT_VERSION) {
       throw new Error(
         `Unsupported hosted organizer store format in ${filePath}`,
@@ -620,60 +610,75 @@ function createFileOrganizerStore(options) {
    * @returns {Promise<void>}
    */
   async function persistNow() {
-    fs.mkdirSync(dataDir, { recursive: true });
-    await writeStoreFile(APPLICATIONS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      applications: [...applicationsById.values()],
-    });
-    await writeStoreFile(ORGANIZERS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      organizers: [...organizersById.values()],
-    });
-    await writeStoreFile(ROLES_FILE, {
-      version: STORE_FORMAT_VERSION,
-      roles: [...rolesByKey.values()],
-    });
-    await writeStoreFile(INVITATIONS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      invitations: [...invitationsById.values()],
-    });
-    await writeStoreFile(RESERVATIONS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      reservations: [...reservationsById.values()],
-    });
-    await writeStoreFile(EVENTS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      events: [...eventsById.values()],
-    });
-    await writeStoreFile(BOARD_SESSIONS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      boardSessions: [...boardSessionsById.values()],
-    });
-    await writeStoreFile(CHANGE_REQUESTS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      changeRequests: [...changeRequestsById.values()],
-    });
-    await writeStoreFile(EVENT_MODERATORS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      moderators: [...eventModeratorsByKey.values()],
-    });
-    await writeStoreFile(AUDIT_FILE, {
-      version: STORE_FORMAT_VERSION,
-      records: auditRecords,
-    });
-  }
-
-  /**
-   * @param {string} filePath
-   * @param {unknown} payload
-   * @returns {Promise<void>}
-   */
-  async function writeStoreFile(filePath, payload) {
-    const temporaryPath = `${filePath}.tmp-${process.pid}-${crypto
-      .randomBytes(4)
-      .toString("hex")}`;
-    await fs.promises.writeFile(temporaryPath, JSON.stringify(payload), "utf8");
-    await fs.promises.rename(temporaryPath, filePath);
+    await stateDocuments.writeMany([
+      {
+        key: APPLICATIONS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          applications: [...applicationsById.values()],
+        },
+      },
+      {
+        key: ORGANIZERS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          organizers: [...organizersById.values()],
+        },
+      },
+      {
+        key: ROLES_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          roles: [...rolesByKey.values()],
+        },
+      },
+      {
+        key: INVITATIONS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          invitations: [...invitationsById.values()],
+        },
+      },
+      {
+        key: RESERVATIONS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          reservations: [...reservationsById.values()],
+        },
+      },
+      {
+        key: EVENTS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          events: [...eventsById.values()],
+        },
+      },
+      {
+        key: BOARD_SESSIONS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          boardSessions: [...boardSessionsById.values()],
+        },
+      },
+      {
+        key: CHANGE_REQUESTS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          changeRequests: [...changeRequestsById.values()],
+        },
+      },
+      {
+        key: EVENT_MODERATORS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          moderators: [...eventModeratorsByKey.values()],
+        },
+      },
+      {
+        key: AUDIT_FILE,
+        payload: { version: STORE_FORMAT_VERSION, records: auditRecords },
+      },
+    ]);
   }
 
   /**

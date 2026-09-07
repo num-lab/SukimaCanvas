@@ -78,3 +78,4 @@
   112.7ms → 113.4ms, load 91.5ms → 86.2ms. The hosted acceptance path pays
   one fsync per accepted mutation by contract. Full gate: `npm run typecheck`,
   `npm run lint`, 554 Node tests, 78 Playwright tests — all green.
+- 2026-09-07（agent）：上述“尚未选定 PostgreSQL”是当时记录，现由 ADR 0011 取代。生产组合通过原 injection seam 使用自托管 PostgreSQL 的 `wbo_board_mutation_ledger`；JSONL adapter 保留给本地测试。真实 PostgreSQL 16 测试覆盖顺序、重启、删除和单活锁。

@@ -176,7 +176,7 @@ SukimaCanvas 需要把现有实时画板引擎包装成中国大陆首发的托�
 ## Further Notes
 
 - 本规格遵守已确认的领域词汇和 ADR：继续使用 WBO、提供 AGPL Corresponding Source、以平台层隔离引擎、使用持久变更账本、对象存储、持久后台工作、Organizer-scoped Entry Grant、至少一次 webhook、净化成果投影和 opaque Event Public ID。
-- 具体 PostgreSQL、S3-compatible object storage、SMTP/邮件、CAPTCHA、部署平台和秘密管理供应商尚未选定；它们必须满足本规格的行为合同，但不应反向改变产品 Interface。
+- 数据层已选定自托管 PostgreSQL，对象存储已选定 Cloudflare R2（通过 portable S3 adapter），事务邮件已选定 Cloudflare Email Sending（通过 portable SMTP adapter）；CAPTCHA、部署平台和秘密管理供应商仍待部署阶段确认。供应商选择不得反向改变产品 Interface。
 - 20 场 Board Session、1,000 Participant Seat、单场最多 50 席是首版初始安全上限，不是未经验证的永久承诺。实施前后应基于真实绘图模式压测，并保留足够运维余量。
 - V1 以单个活跃应用实例为部署约束，但持久化、对象存储、任务和入场规则不得永久依赖本地进程状态，为后续扩展保留迁移空间。
 - 本规格将当前工作标为 `ready-for-agent`；后续可将其拆分为按依赖顺序实施的本地 tickets，而不重新讨论已确认的用户合同。

@@ -19,6 +19,8 @@ export type StaticFileServer = (
 
 export type ServerRuntime = {
   config: ServerConfig;
+  initialize?: () => Promise<void>;
+  close?: () => Promise<void>;
   fileserver: StaticFileServer;
   errorPage: import("../server/http/templating.mjs").Template;
   boardTemplate: import("../server/http/templating.mjs").BoardTemplate;
@@ -50,6 +52,8 @@ export type HostedEventModeration = ReturnType<
 
 export type HostedEventModule = {
   enabled: boolean;
+  initialize: () => Promise<void>;
+  close: () => Promise<void>;
   serveHome: HttpRouteHandler;
   serveSource: HttpRouteHandler;
   serveRegister: HttpRouteHandler;

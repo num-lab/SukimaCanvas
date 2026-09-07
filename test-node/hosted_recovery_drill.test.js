@@ -62,6 +62,17 @@ const RTO_BUDGET_MS = 15 * MINUTE;
 const PRODUCTION_CONFIG = require("../server/configuration.mjs");
 
 /**
+ * A volume snapshot may contain an atomic-write staging file, but restore never
+ * consumes one. A recursive userspace copy must skip those transient names so
+ * a rename racing the directory walk cannot turn the snapshot simulation into
+ * an unrelated ENOENT.
+ * @param {string} source
+ */
+function isDurableSnapshotPath(source) {
+  return !/\.tmp-\d+-[0-9a-f]+$/i.test(path.basename(source));
+}
+
+/**
  * A controlled webhook receiver for the drill's post-recovery delivery.
  */
 async function createReceiver() {
@@ -562,7 +573,10 @@ test("restore drill: a crash-consistent backup plus re-shipped ledger rebuilds e
       // Take the crash-consistent backup: a plain recursive copy of the data
       // root, exactly what a volume snapshot captures.
       const backupDir = await fs.mkdtemp(path.join(os.tmpdir(), "wbo-backup-"));
-      await fs.cp(dataDir, backupDir, { recursive: true });
+      await fs.cp(dataDir, backupDir, {
+        recursive: true,
+        filter: isDurableSnapshotPath,
+      });
 
       // Accept a second write AFTER the backup: only the re-shipped ledger
       // can bring it back.

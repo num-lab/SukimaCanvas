@@ -1,8 +1,7 @@
 import crypto from "node:crypto";
-import * as fs from "node:fs";
-import * as path from "node:path";
 
 import observability from "../../observability/index.mjs";
+import { createFileStateDocuments } from "../storage/documents.mjs";
 
 const { logger } = observability;
 
@@ -74,10 +73,9 @@ function digestShareToken(token) {
 const AUDIENCES = new Set(["organizer", "members", "link"]);
 
 /**
- * Durable storage for Published Canvas publications, in JSON files under the
- * shared hosted data directory, exactly like the other hosted stores: reads
- * come from an in-memory index loaded on first use, and every mutation is
- * appended to a serialized write queue with atomic file replacement.
+ * Durable storage for Published Canvas publications. Reads come from an
+ * in-memory index loaded on first use, and every mutation replaces a state
+ * document through the selected durable adapter.
  *
  * The store owns the derived canvas objects too, putting them into the same
  * immutable archive store the Private Board Archives use under their own
@@ -92,10 +90,13 @@ const AUDIENCES = new Set(["organizer", "members", "link"]);
  *   clock?: () => number,
  *   randomId?: () => string,
  *   archiveStore: ReturnType<typeof import("../archive/store.mjs").createFileBoardArchiveStore>,
+ *   stateDocuments?: import("../storage/documents.mjs").StateDocuments,
  * }} options
  */
 function createFilePublicationStore(options) {
   const dataDir = options.dataDir;
+  const stateDocuments =
+    options.stateDocuments || createFileStateDocuments({ dataDir });
   const clock = options.clock || (() => Date.now());
   const randomId = options.randomId || (() => crypto.randomUUID());
   const archiveStore = options.archiveStore;
@@ -107,12 +108,11 @@ function createFilePublicationStore(options) {
   let loaded = false;
   let writeQueue = Promise.resolve();
 
-  const PUBLICATIONS_FILE = path.join(dataDir, "publications.json");
+  const PUBLICATIONS_FILE = "publications.json";
 
   function ensureLoaded() {
     if (loaded) return;
     loaded = true;
-    fs.mkdirSync(dataDir, { recursive: true });
     const stored = readStoreFile(PUBLICATIONS_FILE, { publications: [] });
     for (const publication of /** @type {StoredPublication[]} */ (
       stored.publications || []
@@ -134,16 +134,8 @@ function createFilePublicationStore(options) {
    * @returns {T}
    */
   function readStoreFile(filePath, fallback) {
-    let contents;
-    try {
-      contents = fs.readFileSync(filePath, "utf8");
-    } catch (error) {
-      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") {
-        return fallback;
-      }
-      throw error;
-    }
-    const parsed = JSON.parse(contents);
+    const parsed = /** @type {any} */ (stateDocuments.read(filePath, fallback));
+    if (parsed === fallback) return fallback;
     if (parsed.version !== STORE_FORMAT_VERSION) {
       throw new Error(
         `Unsupported hosted publication store format in ${filePath}`,
@@ -182,24 +174,15 @@ function createFilePublicationStore(options) {
    * @returns {Promise<void>}
    */
   async function persistNow() {
-    fs.mkdirSync(dataDir, { recursive: true });
-    await writeStoreFile(PUBLICATIONS_FILE, {
-      version: STORE_FORMAT_VERSION,
-      publications: [...publicationsByBoardSession.values()],
-    });
-  }
-
-  /**
-   * @param {string} filePath
-   * @param {unknown} payload
-   * @returns {Promise<void>}
-   */
-  async function writeStoreFile(filePath, payload) {
-    const temporaryPath = `${filePath}.tmp-${process.pid}-${crypto
-      .randomBytes(4)
-      .toString("hex")}`;
-    await fs.promises.writeFile(temporaryPath, JSON.stringify(payload), "utf8");
-    await fs.promises.rename(temporaryPath, filePath);
+    await stateDocuments.writeMany([
+      {
+        key: PUBLICATIONS_FILE,
+        payload: {
+          version: STORE_FORMAT_VERSION,
+          publications: [...publicationsByBoardSession.values()],
+        },
+      },
+    ]);
   }
 
   /**

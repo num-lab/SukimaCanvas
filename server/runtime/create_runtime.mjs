@@ -303,6 +303,8 @@ function createServerRuntime(config) {
   });
   return {
     config,
+    initialize: hostedEventModule.initialize,
+    close: hostedEventModule.close,
     fileserver,
     errorPage: errorTemplate,
     boardTemplate,

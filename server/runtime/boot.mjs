@@ -12,9 +12,10 @@ const { logger } = observability;
 /**
  * @param {import("http").Server} server
  * @param {SocketServerModule} socketModule
+ * @param {ServerRuntime} runtime
  * @returns {void}
  */
-function installShutdownHandlers(server, socketModule) {
+function installShutdownHandlers(server, socketModule, runtime) {
   let shutdownRequested = false;
 
   /**
@@ -28,6 +29,7 @@ function installShutdownHandlers(server, socketModule) {
     try {
       await socketModule.shutdown?.();
       await closeHttpServer(server);
+      await runtime.close?.();
       logger.info("server.shutdown_completed", { signal });
       process.exit(0);
     } catch (error) {
@@ -79,17 +81,24 @@ function closeHttpServer(server) {
  */
 async function startWhiteboardServer(config, options) {
   const runtime = options.runtime(config);
-  const app = /** @type {ServerApp} */ (
-    createServer((request, response) => {
-      options.http({ request, response, runtime });
-    })
-  );
-
-  app.on("clientError", handleClientError);
-  await check_output_directory(config.HISTORY_DIR);
-  await options.sockets.start(app, config, runtime);
+  /** @type {ServerApp | undefined} */
+  let app;
+  try {
+    await runtime.initialize?.();
+    app = /** @type {ServerApp} */ (
+      createServer((request, response) => {
+        options.http({ request, response, runtime });
+      })
+    );
+    app.on("clientError", handleClientError);
+    await check_output_directory(config.HISTORY_DIR);
+    await options.sockets.start(app, config, runtime);
+  } catch (error) {
+    await runtime.close?.().catch(() => {});
+    throw error;
+  }
   if (options.installShutdownHandlers === true) {
-    installShutdownHandlers(app, options.sockets);
+    installShutdownHandlers(app, options.sockets, runtime);
   }
   await new Promise(
     /**
@@ -114,6 +123,7 @@ async function startWhiteboardServer(config, options) {
   app.shutdown = async () => {
     await options.sockets.shutdown?.();
     await closeHttpServer(app);
+    await runtime.close?.();
   };
   return app;
 }
