@@ -1,27 +1,11 @@
-<!doctype html>
-<html lang="{{hostedLanguage}}" dir="{{hostedDirection}}">
-  <head>
-    <meta charset="utf-8" />
-    <title>{{hostedTranslations.hosted_source_title}} — {{hostedTranslations.hosted_service_name}}</title>
-    <base href="{{baseHref}}" />
-    <link rel="stylesheet" href="hosted.css" />
-    <meta name="description" content="{{hostedTranslations.hosted_source_description}}" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="icon" type="image/x-icon" sizes="16x16" href="favicon.ico" />
-    <link rel="canonical" href="{{hostedCanonicalUrl}}" />
-    {{#hostedLanguageLinks}}
-    <link rel="alternate" hreflang="{{language}}" href="{{href}}" />
-    {{/hostedLanguageLinks}}
-    {{{htmlHeadSnippet}}}
-  </head>
-  <body class="hosted-shell">
-    <header class="hosted-header">
-      <a class="hosted-brand" href=".">SukimaCanvas</a>
-      <nav aria-label="{{hostedTranslations.hosted_language_label}}">
-        <a href=".">{{hostedTranslations.hosted_back_home}}</a>
-      </nav>
-    </header>
-
+{{#> hosted-layout
+  pageTitle=hostedTranslations.hosted_source_title
+  canonical=true
+  homeOnlyNavigation=true
+  appendServiceName=true
+  omitAppleTouchIcon=true
+  pageDescription=hostedTranslations.hosted_source_description
+}}
     <main class="hosted-main hosted-source-main">
       <section class="hosted-hero" aria-labelledby="hosted-source-title">
         <p class="hosted-eyebrow">{{hostedTranslations.hosted_service_name}}</p>
@@ -47,9 +31,4 @@
         {{/sourceAvailable}}
       </section>
     </main>
-
-    <footer class="hosted-footer">
-      <a href=".">{{hostedTranslations.hosted_back_home}}</a>
-    </footer>
-  </body>
-</html>
+{{/hosted-layout}}

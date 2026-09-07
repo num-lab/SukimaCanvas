@@ -103,9 +103,12 @@ backed by the shared `TURNSTILE_*` configuration. Password resets and password
 changes revoke sessions (resets revoke all of the account's sessions, changes
 keep the current device's); account disabling and explicit global revocation
 invalidate every session. CSRF tokens rotate on login and logout, so tokens
-rendered before a session transition are deterministically rejected. Raw
-hosted page templates are never served statically; their routes own them, and
-legacy mode 404s all account routes. Verification and recovery mail is
+rendered before a session transition are deterministically rejected. Shared
+Hosted document chrome lives in
+[hosted-layout.html](./client-data/partials/hosted-layout.html); route-owned
+page templates provide its local Handlebars partial block. Hosted page
+templates and partials are never served statically, and legacy mode 404s all
+account routes. Verification and recovery mail is
 composed in the request's language and queued through the notification
 service's durable queue (see below), so a mail vendor outage becomes an
 observable retry instead of a failed request. Delivery goes through the

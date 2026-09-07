@@ -22,7 +22,7 @@ import { parseRequestUrl } from "./request_url.mjs";
 /** @typedef {import("./client_configuration.mjs").ClientConfiguration} ClientConfig */
 /** @typedef {"zstd" | "br" | "gzip"} CompressionEncoding */
 /**
- * @typedef {{htmlHeadSnippet?: string, supportedLanguages?: string[], languageMatching?: "loose" | "strict"}} TemplateOptions
+ * @typedef {{htmlHeadSnippet?: string, supportedLanguages?: string[], languageMatching?: "loose" | "strict", partials?: {[name: string]: string}}} TemplateOptions
  */
 /** @import { ServerConfig } from "../../types/server-runtime.d.ts" */
 
@@ -293,8 +293,11 @@ class StaticTemplate {
   /** @type {string} */
   htmlHeadSnippet;
 
-  /** @type {(parameters: {[name: string]: any}) => string} */
+  /** @type {(parameters: {[name: string]: any}, options?: {partials?: {[name: string]: string}}) => string} */
   template;
+
+  /** @type {{[name: string]: string}} */
+  partials;
 
   /**
    * @param {string} templatePath
@@ -305,6 +308,7 @@ class StaticTemplate {
     this.templateContents = contents;
     this.htmlHeadSnippet = options?.htmlHeadSnippet || "";
     this.template = handlebars.compile(contents);
+    this.partials = options?.partials || {};
   }
 
   /**
@@ -312,10 +316,13 @@ class StaticTemplate {
    * @returns {string}
    */
   render(parameters = {}) {
-    return this.template({
-      htmlHeadSnippet: this.htmlHeadSnippet,
-      ...parameters,
-    });
+    return this.template(
+      {
+        htmlHeadSnippet: this.htmlHeadSnippet,
+        ...parameters,
+      },
+      { partials: this.partials },
+    );
   }
 }
 

@@ -1,3 +1,5 @@
+import fs from "node:fs";
+
 import { registerBoardMutationLedgerFactory } from "../board/ledger_registry.mjs";
 import { localizedHref, Template } from "../http/templating.mjs";
 import observability from "../observability/index.mjs";
@@ -58,7 +60,7 @@ class HostedPageTemplate extends Template {
   /**
    * @param {string} templatePath
    * @param {ServerConfig} serverConfig
-   * @param {{htmlHeadSnippet?: string, resolveAccount?: (request: HttpRequest) => {accountId: string, email: string, isOperator: boolean} | null}} [options]
+   * @param {{htmlHeadSnippet?: string, partials?: {[name: string]: string}, resolveAccount?: (request: HttpRequest) => {accountId: string, email: string, isOperator: boolean} | null}} [options]
    */
   constructor(templatePath, serverConfig, options) {
     super(templatePath, serverConfig, {
@@ -128,6 +130,7 @@ class HostedPageTemplate extends Template {
 /**
  * @param {ServerConfig} config
  * @param {{
+ *   layoutTemplatePath: string,
  *   homeTemplatePath: string,
  *   sourceTemplatePath: string,
  *   registerTemplatePath: string,
@@ -256,6 +259,9 @@ function createHostedEventModule(config, paths) {
   };
   const templateOptions = {
     htmlHeadSnippet: paths.htmlHeadSnippet,
+    partials: {
+      "hosted-layout": fs.readFileSync(paths.layoutTemplatePath, "utf8"),
+    },
     resolveAccount,
   };
   const homeTemplate = new HostedPageTemplate(

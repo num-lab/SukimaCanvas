@@ -428,12 +428,12 @@ test("index route renders absolute canonical and hreflang urls", async () => {
   );
   try {
     const response = await request(app, "/");
-    const arabicResponse = await request(app, "/?lang=ar");
+    const japaneseResponse = await request(app, "/?lang=ja");
     const { port } = getTcpAddress(app);
     const origin = `http://127.0.0.1:${port}`;
 
     assert.equal(response.statusCode, 200);
-    assert.match(arabicResponse.body, /<html lang="ar" dir="rtl">/);
+    assert.match(japaneseResponse.body, /<html lang="ja" dir="ltr">/);
     assert.match(
       response.body,
       new RegExp(`<link rel="canonical" href="${origin}/\\?lang=en" />`),
@@ -441,13 +441,13 @@ test("index route renders absolute canonical and hreflang urls", async () => {
     assert.match(
       response.body,
       new RegExp(
-        `<link rel="alternate" hreflang="vi" href="${origin}/\\?lang=vi" />`,
+        `<link rel="alternate" hreflang="ja" href="${origin}/\\?lang=ja" />`,
       ),
     );
     assert.match(
       response.body,
       new RegExp(
-        `<a href="${origin}/\\?lang=vi" hreflang="vi" rel="alternate">vi</a>`,
+        `<a href="${origin}/\\?lang=ja" hreflang="ja" rel="alternate">ja</a>`,
       ),
     );
     assert.doesNotMatch(response.body, /hreflang="vn"/);
@@ -502,12 +502,12 @@ test("rules route uses base path and bundled template with custom webroot", asyn
     createServerConfig(dirs, { BASE_PATH: basePath }),
   );
   try {
-    const response = await request(app, "/rules?lang=fr");
+    const response = await request(app, "/rules?lang=ja");
     const { port } = getTcpAddress(app);
     const origin = `http://127.0.0.1:${port}`;
 
     assert.equal(response.statusCode, 200);
-    assert.match(response.body, /<h2>Règles de la communauté<\/h2>/);
+    assert.match(response.body, /<h2>コミュニティルール<\/h2>/);
     assert.match(
       response.body,
       new RegExp(`<base href="${origin}/custom/base/path/" />`),
@@ -521,19 +521,19 @@ test("rules route uses base path and bundled template with custom webroot", asyn
     assert.match(
       response.body,
       new RegExp(
-        `<link rel="canonical" href="${origin}/custom/base/path/rules\\?lang=fr" />`,
+        `<link rel="canonical" href="${origin}/custom/base/path/rules\\?lang=ja" />`,
       ),
     );
     assert.match(
       response.body,
       new RegExp(
-        `<link rel="alternate" hreflang="vi" href="${origin}/custom/base/path/rules\\?lang=vi" />`,
+        `<link rel="alternate" hreflang="zh-CN" href="${origin}/custom/base/path/rules\\?lang=zh-CN" />`,
       ),
     );
     assert.match(
       response.body,
       new RegExp(
-        `<a href="${origin}/custom/base/path/rules\\?lang=vi" hreflang="vi" rel="alternate">vi</a>`,
+        `<a href="${origin}/custom/base/path/rules\\?lang=zh-CN" hreflang="zh-CN" rel="alternate">zh-CN</a>`,
       ),
     );
     assert.doesNotMatch(response.body, /\/custom\/base\/rules\?/);
@@ -785,18 +785,17 @@ test("board pages are no-store in development and render plain asset URLs", asyn
   );
   try {
     const response = await request(app, "/boards/cache-test");
-    const frenchResponse = await request(app, "/boards/cache-test?lang=fr");
-    const arabicResponse = await request(app, "/boards/cache-test?lang=ar");
+    const japaneseResponse = await request(app, "/boards/cache-test?lang=ja");
 
     assert.equal(response.statusCode, 200);
-    assert.equal(frenchResponse.statusCode, 200);
+    assert.equal(japaneseResponse.statusCode, 200);
     assert.match(
-      arabicResponse.body,
-      /<html lang="ar" dir="ltr" data-ui-direction="rtl">/,
+      japaneseResponse.body,
+      /<html lang="ja" dir="ltr" data-ui-direction="ltr">/,
     );
     assert.match(
-      arabicResponse.body,
-      /<div id="boardHud" class="board-hud" dir="rtl">/,
+      japaneseResponse.body,
+      /<div id="boardHud" class="board-hud" dir="ltr">/,
     );
     assert.equal(response.headers["cache-control"], "no-store");
     const { port } = getTcpAddress(app);
@@ -814,7 +813,7 @@ test("board pages are no-store in development and render plain asset URLs", asyn
     assert.match(
       response.body,
       new RegExp(
-        `<link rel="alternate" hreflang="vi" href="${origin}/boards/cache-test\\?lang=vi" />`,
+        `<link rel="alternate" hreflang="ja" href="${origin}/boards/cache-test\\?lang=ja" />`,
       ),
     );
     assert.doesNotMatch(response.body, /hreflang="vn"/);
@@ -832,12 +831,12 @@ test("board pages are no-store in development and render plain asset URLs", asyn
       /<div id="boardStatusIndicator"[^>]* hidden/,
     );
     assert.match(
-      frenchResponse.body,
-      /<div id="boardStatusTitle" class="board-status-title">Chargement<\/div>/,
+      japaneseResponse.body,
+      /<div id="boardStatusTitle" class="board-status-title">読み込み中<\/div>/,
     );
     assert.match(
-      frenchResponse.body,
-      /<meta property="og:title" content="cache-test \| WBO \| Tableau blanc collaboratif" \/>/,
+      japaneseResponse.body,
+      /<meta property="og:title" content="cache-test \| WBO \| 協同作業できるオンラインホワイトボード" \/>/,
     );
     assert.match(response.body, /\.\.\/board\.css(?:["'])/);
     assert.match(response.body, /\.\.\/js\/board_main\.js(?:["'])/);
@@ -921,32 +920,35 @@ test("index, manifest, and fallback error pages localize UI strings", async () =
     createServerConfig(dirs, { WEBROOT: CLIENT_WEBROOT }),
   );
   try {
-    const index = await request(app, "/?lang=fr");
-    const manifest = await request(app, "/manifest.json?lang=fr");
-    const missing = await request(app, "/missing-file.txt?lang=fr");
+    const index = await request(app, "/?lang=ja");
+    const manifest = await request(app, "/manifest.json?lang=ja");
+    const missing = await request(app, "/missing-file.txt?lang=ja");
 
     assert.equal(index.statusCode, 200);
-    assert.match(index.body, /alt="Tableau blanc collaboratif"/);
-    assert.match(index.body, /<input type="submit" value="Ouvrir" \/>/);
+    assert.match(index.body, /alt="協同作業できるオンラインホワイトボード"/);
+    assert.match(index.body, /<input type="submit" value="開く" \/>/);
     assert.doesNotMatch(index.body, /value="Go"/);
 
     assert.equal(manifest.statusCode, 200);
     assert.equal(manifest.headers["content-type"], "application/manifest+json");
     const manifestJson = JSON.parse(manifest.body);
-    assert.equal(manifestJson.name, "WBO — Tableau blanc collaboratif");
+    assert.equal(
+      manifestJson.name,
+      "WBO — 協同作業できるオンラインホワイトボード",
+    );
     assert.equal(
       manifestJson.description,
-      "Logiciel libre pour collaborer en ligne sur un tableau blanc. Venez dessiner vos idées ensemble sur WBO !",
+      "無料でオープンソースの協同作業できるオンラインホワイトボード。WBOでアイディアを共有しましょう!",
     );
 
     assert.equal(missing.statusCode, 404);
     assert.match(
       missing.body,
-      /<p class="message">Une erreur inconnue s’est produite, veuillez recharger la page<\/p>/,
+      /<p class="message">予期しないエラーが発生しました。ページを再読み込みしてください。<\/p>/,
     );
     assert.match(
       missing.body,
-      /<a class="home-link" href="[^"]+">Retour à WBO<\/a>/,
+      /<a class="home-link" href="[^"]+">WBO に戻る<\/a>/,
     );
     assert.doesNotMatch(missing.body, /Sorry, an error occured/);
     assert.doesNotMatch(missing.body, />Back to WBO</);

@@ -606,7 +606,7 @@ test.describe("collaboration and rate limiting", () => {
         await Promise.all([
           boardPage.gotoBoard(boardName, { token: TOKENS.globalModerator }),
           targetBoard.gotoBoard(boardName, {
-            lang: "ru",
+            lang: "ja",
             token: TOKENS.globalEditor,
           }),
         ]);
@@ -634,8 +634,8 @@ test.describe("collaboration and rate limiting", () => {
           .toMatchObject({
             visible: true,
             kind: "ban",
-            title: "Редактирование временно заблокировано",
-            acknowledgeLabel: "Понятно",
+            title: "編集は一時的に制限されています",
+            acknowledgeLabel: "理解しました",
           });
         const disconnectDialog = targetPage.locator(
           "#moderation-disconnect-dialog",

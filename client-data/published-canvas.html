@@ -1,45 +1,8 @@
-<!doctype html>
-<html lang="{{hostedLanguage}}" dir="{{hostedDirection}}">
-  <head>
-    <meta charset="utf-8" />
-    <title>{{hostedCanvasEventName}}</title>
-    <base href="{{baseHref}}" />
-    <link rel="stylesheet" href="hosted.css" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- The published canvas is a gated, revocable outcome and must never be indexed. -->
-    <meta name="robots" content="noindex, nofollow" />
-    <link rel="icon" type="image/x-icon" sizes="16x16" href="favicon.ico" />
-    <link rel="apple-touch-icon" href="favicon.svg" />
-    {{{htmlHeadSnippet}}}
-  </head>
-  <body class="hosted-shell">
-    <header class="hosted-header">
-      <a class="hosted-brand" href=".">SukimaCanvas</a>
-      <nav aria-label="{{hostedTranslations.hosted_language_label}}">
-        {{#if hostedAccount}}
-        <span class="hosted-account-email">{{hostedAccount.email}}</span>
-        <a href="account">{{hostedTranslations.hosted_nav_account}}</a>
-        <a href="organizer">{{hostedTranslations.hosted_nav_organizer}}</a>
-        {{#if hostedAccount.isOperator}}
-        <a href="operator">{{hostedTranslations.hosted_nav_operator}}</a>
-        {{/if}}
-        <a href="logout">{{hostedTranslations.hosted_nav_logout}}</a>
-        {{else}}
-        <a href="login">{{hostedTranslations.hosted_nav_login}}</a>
-        <a href="register">{{hostedTranslations.hosted_nav_register}}</a>
-        {{/if}}
-
-        <details class="hosted-language-picker">
-          <summary>{{hostedLanguage}}</summary>
-          <ul>
-            {{#hostedLanguageLinks}}
-            <li><a href="{{href}}" hreflang="{{language}}">{{language}}</a></li>
-            {{/hostedLanguageLinks}}
-          </ul>
-        </details>
-      </nav>
-    </header>
-
+{{#> hosted-layout
+  pageTitle=hostedCanvasEventName
+  noIndex=true
+  workspaceNavigation=true
+}}
     <main class="hosted-main hosted-account-main">
       <section class="hosted-account-card hosted-canvas-page" aria-labelledby="hosted-canvas-title">
         <h1 id="hosted-canvas-title">{{hostedCanvasEventName}}</h1>
@@ -63,10 +26,4 @@
         {{/if}}
       </section>
     </main>
-
-    <footer class="hosted-footer">
-      <span>{{hostedTranslations.hosted_service_name}}</span>
-      <a href="source">{{hostedTranslations.hosted_source_link}}</a>
-    </footer>
-  </body>
-</html>
+{{/hosted-layout}}

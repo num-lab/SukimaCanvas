@@ -61,7 +61,7 @@ test("reconnect resets Turnstile and recovers protected writes", async ({
   try {
     const boardPage = new BoardPage(page, server);
     await boardPage.installTurnstileMock();
-    await boardPage.gotoBoard("anonymous", { lang: "fr", tokenQuery: "" });
+    await boardPage.gotoBoard("anonymous", { lang: "ja", tokenQuery: "" });
     await expect(boardPage.tool("pencil")).toBeVisible();
     await boardPage.waitForSocketConnected();
     await boardPage.trackBroadcasts();
@@ -75,7 +75,7 @@ test("reconnect resets Turnstile and recovers protected writes", async ({
 
     const peerPage = await context.newPage();
     const peerBoard = new BoardPage(peerPage, server);
-    await peerBoard.gotoBoard("anonymous", { lang: "fr", tokenQuery: "" });
+    await peerBoard.gotoBoard("anonymous", { lang: "ja", tokenQuery: "" });
     await expect(peerBoard.tool("pencil")).toBeVisible();
     await peerBoard.waitForSocketConnected();
     await peerBoard.trackBroadcasts();
@@ -157,7 +157,7 @@ test("turnstile widget errors preserve queued writes until a later success", asy
   try {
     const boardPage = new BoardPage(page, server);
     await boardPage.installTurnstileMock();
-    await boardPage.gotoBoard("anonymous", { lang: "fr", tokenQuery: "" });
+    await boardPage.gotoBoard("anonymous", { lang: "ja", tokenQuery: "" });
     await expect(boardPage.tool("pencil")).toBeVisible();
     await boardPage.waitForSocketConnected();
 
@@ -179,7 +179,7 @@ test("turnstile widget errors preserve queued writes until a later success", asy
     });
     await expect(boardPage.statusIndicator).toBeVisible();
     await expect(boardPage.statusTitle).toContainText(
-      "Le filtre anti-robot indique",
+      "ロボット対策チェックの結果:",
     );
     await expect(boardPage.statusTitle).toContainText(
       "Security check failed (mock-widget-error).",

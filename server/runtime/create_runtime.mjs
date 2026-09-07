@@ -40,6 +40,7 @@ const HOSTED_TEMPLATE_PATHS = new Set([
   "/operator-historical-imports.html",
   "/event.html",
   "/organizer-event.html",
+  "/partials/hosted-layout.html",
 ]);
 
 /** @import { HttpResponse, ServerConfig, ServerRuntime } from "../../types/server-runtime.d.ts" */
@@ -197,6 +198,10 @@ function createServerRuntime(config) {
     { htmlHeadSnippet },
   );
   const hostedEventModule = createHostedEventModule(config, {
+    layoutTemplatePath: configuredTemplatePathWithBundledFallback(
+      config,
+      "partials/hosted-layout.html",
+    ),
     homeTemplatePath: configuredTemplatePathWithBundledFallback(
       config,
       "hosted.html",

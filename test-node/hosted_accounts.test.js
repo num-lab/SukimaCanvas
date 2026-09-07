@@ -650,6 +650,7 @@ test("legacy WBO mode rejects account routes and raw hosted templates", async ()
       "/logout.html",
       "/hosted.html",
       "/source.html",
+      "/partials/hosted-layout.html",
     ]) {
       const response = await request(app, template);
       assert.equal(
@@ -673,6 +674,7 @@ test("hosted mode never serves raw page templates over their routes", async () =
       "/logout.html",
       "/hosted.html",
       "/source.html",
+      "/partials/hosted-layout.html",
     ]) {
       const response = await requestWithCookies(app, template);
       assert.equal(

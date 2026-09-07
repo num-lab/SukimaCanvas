@@ -90,7 +90,7 @@ test("hosted mode serves localized home and versioned corresponding source", asy
     assert.equal(chinese.statusCode, 200);
     assert.match(chinese.body, /<html lang="zh-CN" dir="ltr">/);
     assert.match(chinese.body, /SukimaCanvas/);
-    assert.match(chinese.body, /对应源代码/);
+    assert.match(chinese.body, /源码/);
     assert.match(chinese.body, /href="source"/);
 
     assert.equal(fallback.statusCode, 200);

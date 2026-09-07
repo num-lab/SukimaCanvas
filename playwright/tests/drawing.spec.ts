@@ -59,7 +59,7 @@ test.describe("drawing and persistence", () => {
     server,
   }) => {
     const boardName = "drawing-pencil-persist";
-    await boardPage.gotoBoard(boardName, { lang: "fr" });
+    await boardPage.gotoBoard(boardName, { lang: "ja" });
     await expect(boardPage.tool("pencil")).toBeVisible();
     await expect(page).toHaveTitle(/WBO/);
     await boardPage.selectTool("pencil");
@@ -122,7 +122,7 @@ test.describe("drawing and persistence", () => {
     const circleSelector =
       "ellipse[cx='200'][cy='200'][rx='200'][ry='200'][stroke='#112233']";
 
-    await boardPage.gotoBoard(boardName, { lang: "fr" });
+    await boardPage.gotoBoard(boardName, { lang: "ja" });
     await expect(boardPage.tool("pencil")).toBeVisible();
     await boardPage.selectTool("ellipse");
     await boardPage.drawCircle("#112233", { x: 200, y: 200 }, 200);
@@ -145,7 +145,7 @@ test.describe("drawing and persistence", () => {
 
     await boardPage.selectTool("ellipse");
     await boardPage.selectTool("ellipse");
-    await expect(boardPage.tool("ellipse")).toContainText("Cercle");
+    await expect(boardPage.tool("ellipse")).toContainText("サークル");
   });
 
   test("text tool creates persistent text", async ({
@@ -672,7 +672,7 @@ test.describe("drawing and persistence", () => {
   });
 
   test("cursor updates self cursor", async ({ boardPage }) => {
-    await boardPage.gotoBoard("anonymous", { lang: "fr" });
+    await boardPage.gotoBoard("anonymous", { lang: "ja" });
     await expect(boardPage.tool("pencil")).toBeVisible();
     await boardPage.moveCursor("#456123", 150, 200);
 
