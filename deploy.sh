@@ -4,8 +4,8 @@ set -euo pipefail
 cd /srv/sukimacanvas
 
 echo "==> Fetching code"
-git fetch origin master
-git reset --hard origin/master
+git fetch origin main
+git reset --hard origin/main
 
 echo "==> Building"
 docker compose -f docker-compose.hosted.yml build app

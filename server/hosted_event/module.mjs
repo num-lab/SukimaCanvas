@@ -50,7 +50,7 @@ const ROLLING_VERSION_LABELS = new Set([
   "head",
   "latest",
   "main",
-  "master",
+  "main",
   "release",
   "stable",
   "trunk",

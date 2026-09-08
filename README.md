@@ -11,4 +11,4 @@ SukimaCanvas「隙间绘板」是[WBO](https://github.com/lovasoa/whitebophir)�
 ## 快速开始
 
 ## 许可证
-本项目使用 [AGPL-3.0 开源许可证](https://github.com/num-lab/SukimaCanvas/blob/master/LICENSE)
+本项目使用 [AGPL-3.0 开源许可证](https://github.com/num-lab/SukimaCanvas/blob/main/LICENSE)

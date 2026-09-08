@@ -170,8 +170,8 @@ seven files — formatter drift in `server/hosted_event/notifications/`,
 `server/hosted_event/organizers/routes.mjs`,
 `server/hosted_event/webhooks/store.mjs`, and three hosted test files,
 plus one unused constant. A `npm run format` sweep landed the fix. CI runs
-only on `master` and pull requests into it, so `develop` never exercises
-this gate on its own: run `npm run lint` before merging to `master`.
+only on `main` and pull requests into it, so `develop` never exercises
+this gate on its own: run `npm run lint` before merging to `main`.
 
 ## 7. Open items (blocking launch, not this evidence)
 
