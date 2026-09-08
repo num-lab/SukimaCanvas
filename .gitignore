@@ -39,3 +39,4 @@ test-results/
 .profiles/
 
 server-data/*.svg
+.vscode/
