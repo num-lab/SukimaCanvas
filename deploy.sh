@@ -12,6 +12,7 @@ docker compose -f docker-compose.hosted.yml build app
 
 echo "==> Restarting"
 docker compose -f docker-compose.hosted.yml up -d postgres
+docker compose -f docker-compose.hosted.yml stop app
 docker compose -f docker-compose.hosted.yml run --rm app npm run check:hosted-storage
 docker compose -f docker-compose.hosted.yml up -d app
 
