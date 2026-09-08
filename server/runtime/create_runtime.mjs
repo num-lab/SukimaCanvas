@@ -18,7 +18,6 @@ const BUNDLED_WEBROOT = path.resolve(RUNTIME_DIR, "../../client-data");
 const HOSTED_ASSET_PATHS = new Set(["/hosted.css"]);
 const HOSTED_TEMPLATE_PATHS = new Set([
   "/hosted.html",
-  "/source.html",
   "/register.html",
   "/login.html",
   "/verify.html",
@@ -205,10 +204,6 @@ function createServerRuntime(config) {
     homeTemplatePath: configuredTemplatePathWithBundledFallback(
       config,
       "hosted.html",
-    ),
-    sourceTemplatePath: configuredTemplatePathWithBundledFallback(
-      config,
-      "source.html",
     ),
     registerTemplatePath: configuredTemplatePathWithBundledFallback(
       config,

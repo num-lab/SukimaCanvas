@@ -47,7 +47,7 @@ function createSocketModule(capture) {
   };
 }
 
-test("hosted mode serves localized home and versioned corresponding source", async () => {
+test("hosted mode serves a localized home and points at the project repository", async () => {
   const historyDir = await createHistoryDirectory();
   /** @type {{runtime?: import("../types/server-runtime.d.ts").ServerRuntime}} */
   const capture = {};
@@ -59,11 +59,6 @@ test("hosted mode serves localized home and versioned corresponding source", asy
       WEBROOT: CLIENT_WEBROOT,
       HOSTED_MODE: true,
       AUTH_SECRET_KEY: "hosted-test-secret",
-      DEPLOYMENT_VERSION: "2026.09.02+abc123",
-      CORRESPONDING_SOURCE_URL:
-        "https://code.example.test/sukimacanvas/tree/{version}",
-      CORRESPONDING_SOURCE_BUILD:
-        "Use the pinned revision with the documented production build command.",
     }),
     {
       logStarted: false,
@@ -84,14 +79,17 @@ test("hosted mode serves localized home and versioned corresponding source", asy
     const chinese = await request(app, "/?lang=zh-CN");
     const fallback = await request(app, "/?lang=fr");
     const regionalFallback = await request(app, "/?lang=zh-TW");
-    const source = await request(app, "/source?lang=en");
+    const gone = await request(app, "/source?lang=en");
     const stylesheet = await request(app, "/hosted.css");
 
     assert.equal(chinese.statusCode, 200);
     assert.match(chinese.body, /<html lang="zh-CN" dir="ltr">/);
     assert.match(chinese.body, /SukimaCanvas/);
     assert.match(chinese.body, /源码/);
-    assert.match(chinese.body, /href="source"/);
+    assert.match(
+      chinese.body,
+      /href="https:\/\/github\.com\/Eitrous\/SukimaCanvas"/,
+    );
 
     assert.equal(fallback.statusCode, 200);
     assert.match(fallback.body, /<html lang="en" dir="ltr">/);
@@ -99,14 +97,11 @@ test("hosted mode serves localized home and versioned corresponding source", asy
     assert.equal(regionalFallback.statusCode, 200);
     assert.match(regionalFallback.body, /<html lang="en" dir="ltr">/);
 
-    assert.equal(source.statusCode, 200);
-    assert.match(source.body, /2026\.09\.02\+abc123/);
-    assert.match(
-      source.body,
-      /https:\/\/code\.example\.test\/sukimacanvas\/tree\/2026\.09\.02%2Babc123/,
+    assert.equal(
+      gone.statusCode,
+      404,
+      "the /source page is gone; the repository link replaces it",
     );
-    assert.match(source.body, /documented production build command/);
-    assert.match(source.body, /<a[^>]+href="\."/);
 
     assert.equal(stylesheet.statusCode, 200);
     assert.match(stylesheet.headers["content-type"] || "", /text\/css/);
@@ -114,13 +109,12 @@ test("hosted mode serves localized home and versioned corresponding source", asy
 
     assert.equal(servedThroughSharedRuntime, true);
     assert.equal(typeof hostedModule.serveHome, "function");
-    assert.equal(typeof hostedModule.serveSource, "function");
   } finally {
     await closeServer(app);
   }
 });
 
-test("source page clearly reports an unavailable deployment mapping", async () => {
+test("the source page is gone in hosted mode too", async () => {
   const historyDir = await createHistoryDirectory();
   const app = await createServerApp(
     createConfig({
@@ -130,8 +124,6 @@ test("source page clearly reports an unavailable deployment mapping", async () =
       WEBROOT: CLIENT_WEBROOT,
       HOSTED_MODE: true,
       AUTH_SECRET_KEY: "hosted-test-secret",
-      DEPLOYMENT_VERSION: "",
-      CORRESPONDING_SOURCE_URL: "",
     }),
     {
       logStarted: false,
@@ -141,44 +133,7 @@ test("source page clearly reports an unavailable deployment mapping", async () =
 
   try {
     const response = await request(app, "/source?lang=zh-CN");
-
-    assert.equal(response.statusCode, 503);
-    assert.equal(response.headers["cache-control"], "no-store");
-    assert.match(response.body, /对应源代码/);
-    assert.match(response.body, /不可用|映射/);
-    assert.doesNotMatch(response.body, /undefined|null/);
-  } finally {
-    await closeServer(app);
-  }
-});
-
-test("source page rejects rolling source URLs", async () => {
-  const historyDir = await createHistoryDirectory();
-  const app = await createServerApp(
-    createConfig({
-      HOST: "127.0.0.1",
-      PORT: 0,
-      HISTORY_DIR: historyDir,
-      WEBROOT: CLIENT_WEBROOT,
-      HOSTED_MODE: true,
-      AUTH_SECRET_KEY: "hosted-test-secret",
-      DEPLOYMENT_VERSION: "main",
-      CORRESPONDING_SOURCE_URL:
-        "https://code.example.test/sukimacanvas/tree/{version}",
-      CORRESPONDING_SOURCE_BUILD: "Build from the pinned revision.",
-    }),
-    {
-      logStarted: false,
-      socketsModule: createSocketModule({}),
-    },
-  );
-
-  try {
-    const response = await request(app, "/source?lang=en");
-
-    assert.equal(response.statusCode, 503);
-    assert.match(response.body, /Corresponding Source unavailable/);
-    assert.doesNotMatch(response.body, /\/tree\/main/);
+    assert.equal(response.statusCode, 404);
   } finally {
     await closeServer(app);
   }

@@ -403,7 +403,6 @@ class Template extends StaticTemplate {
       language,
       direction: language === "ar" ? "rtl" : "ltr",
       canonicalUrl: localizedUrl(baseUrl, language),
-      hostedSourceHref: new URL("source", baseHref).href,
       translations,
       configuration,
       moderator,

@@ -149,11 +149,10 @@ one-time-reveal behaviors that keep secrets out of responses and logs.
   (state, queues, and ledgers in PostgreSQL; artifacts in R2) lives outside
   the application process. PostgreSQL's advisory lock rejects an accidental
   second active instance.
-- The `/source` page serves the immutable, version-pinned Corresponding
-  Source mapping and fails closed (503) when the deployment mapping is
-  missing or a rolling version label is pinned (tested in
-  `test-node/hosted_runtime.test.js` / server route tests). Verify
-  `/source` after every deploy.
+- There is no `/source` page: the source-code links on the board chrome
+  and the hosted footer point at the public project repository. A request
+  to `/source` 404s in both hosted and legacy modes (tested in
+  `test-node/hosted_runtime.test.js`).
 
 ## 6. Gate status at recording time
 

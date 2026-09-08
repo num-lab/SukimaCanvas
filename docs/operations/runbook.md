@@ -69,7 +69,8 @@ discarded and rebuilt from the ledger.
    JSONB documents, ledger rows, or manifests by hand.
 6. Verify per `launch-evidence.md`: accounts sign in, a board snapshot rebuilds,
    sessions advance, `archive_failed` work retries, queues drain, authorized R2
-   artifacts read correctly, and `/source` reports the pinned version.
+   artifacts read correctly, and the source-code links resolve to the public
+   repository.
 
 ## 3. Monthly recovery drill
 
@@ -160,12 +161,10 @@ section covers the constraints that hold for every deploy afterwards.
   poker seal), stop, deploy the pinned version, start. The durable task
   queues catch up through the persisted times; the lifecycle poker and
   every pipeline are idempotent catch-ups, not timers.
-- **Source disclosure:** the deployment pins `WBO_DEPLOYMENT_VERSION`,
-  `WBO_CORRESPONDING_SOURCE_URL` (with `{version}`), and
-  `WBO_CORRESPONDING_SOURCE_BUILD`. The `/source` page serves exactly the
-  version-pinned mapping and fails closed (503) when the mapping is
-  missing — verify after every deploy that `/source` reports the new
-  immutable version.
+- **Source disclosure:** there is no `/source` page; the source-code links
+  on the board chrome and the hosted footer point at the public project
+  repository (https://github.com/Eitrous/SukimaCanvas). Verify after every
+  deploy that those links resolve.
 - Configuration: all `WBO_HOSTED_*` fields are startup-only
   (`server/configuration.mjs`); never mutate them per request, and never
   persist secrets outside the platform secret store (`AUTH_SECRET_KEY`
