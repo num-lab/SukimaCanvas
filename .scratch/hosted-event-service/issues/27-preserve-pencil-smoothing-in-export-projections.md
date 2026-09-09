@@ -26,3 +26,4 @@
 - 修复应位于展示／导出投影边界，不应直接把规范存储改成 `C` 命令；当前持久化扫描、增量追加和恢复路径都依赖简单的 `M/l` 格式。平滑后曲线可能越过采样点包围盒，修复时必须同时处理精确边界，不能只替换 `d` 属性。
 - #24“Image Export 阻塞单活跃实例”继续独立处理。该票解决几何一致性，不负责把 Resvg 移到 worker thread／独立进程，也不以线程模型变化作为验收条件。
 - 2026-09-09（implementation）：Pencil 模块新增共享平滑投影和三次贝塞尔精确边界；服务端展示投影接入 Published Canvas、PNG 渲染输入以及 legacy preview/download，并在曲线或描边越过原始 SVG 范围时扩展 viewport。按用户要求，本轮暂不新增或运行测试，测试、typecheck 和 export benchmark 验收项保持未完成，ticket 继续保留 `ready-for-agent`。
+- 2026-09-09（code review）：Standards 轴发现 SVG 根属性更新重复及严格扫描参数命名不清，已分别收敛到 `updateSvgRootAttributes` 并改名；Spec 轴发现变换后的描边留白不足，展示投影现统一计算包括 scale/shear 的 painted bounds，SVG viewport 与 PNG 内容边界共用该结果。测试与 benchmark 仍按用户要求延期。

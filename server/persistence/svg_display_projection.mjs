@@ -7,6 +7,7 @@ import {
   parseStoredSvgEnvelope,
   parseStoredSvgItems,
   serializeStoredSvgEnvelope,
+  updateSvgRootAttributes,
 } from "./svg_envelope.mjs";
 import { escapeHtml } from "./xml_escape.mjs";
 
@@ -28,7 +29,7 @@ function extendBounds(bounds, next) {
 }
 
 /**
- * Includes a Pencil stroke around its transformed center-line bounds. The
+ * Includes a stroke around its transformed center-line bounds. The
  * matrix row lengths are the exact axis-aligned spill of a transformed circle.
  *
  * @param {{minX: number, minY: number, maxX: number, maxY: number}} bounds
@@ -73,38 +74,61 @@ function replacePathDataAttribute(raw, d) {
 }
 
 /**
- * Projects one canonical stored Pencil item into its display path. Unknown or
- * malformed paths remain distinguishable from Pencil items by returning null.
+ * Projects one canonical stored item for display and returns its painted
+ * bounds. Pencil paths use their smoothed center line; every other item keeps
+ * its stored geometry. Unknown or malformed items return null.
  *
  * @param {{raw: string, tagName: string, attributes: {[name: string]: string}}} item
+ * @param {number} paintOrder
  * @returns {{raw: string, bounds: {minX: number, minY: number, maxX: number, maxY: number}} | null}
  */
-function projectStoredSvgItemForDisplay(item) {
-  if (item.tagName !== "path") return null;
-  const projected = projectStoredPencilPath(item.attributes.d);
-  if (!projected) return null;
-  const raw = replacePathDataAttribute(item.raw, projected.d);
-  return raw ? { raw, bounds: projected.bounds } : null;
+function projectStoredSvgItemForDisplay(item, paintOrder) {
+  const canonical = canonicalItemFromStoredSvgEntry(item, paintOrder);
+  if (!canonical?.bounds) return null;
+
+  let raw = item.raw;
+  let localBounds = canonical.bounds;
+  if (item.tagName === "path") {
+    const projected = projectStoredPencilPath(item.attributes.d);
+    const projectedRaw = projected
+      ? replacePathDataAttribute(item.raw, projected.d)
+      : null;
+    if (projected && projectedRaw) {
+      raw = projectedRaw;
+      localBounds = projected.bounds;
+    }
+  }
+
+  const effective = MessageCommon.applyTransformToBounds(
+    localBounds,
+    canonical.transform,
+  );
+  if (!effective) return null;
+  const strokeWidth = Number(item.attributes["stroke-width"]);
+  return {
+    raw,
+    bounds: includeStrokeBounds(effective, strokeWidth, canonical.transform),
+  };
 }
 
 /**
- * Expands a stored SVG viewport only when a smoothed Pencil stroke extends
- * beyond it. Width, height, and viewBox use the same coordinate scale so the
- * display projection remains 1:1.
+ * Expands a stored SVG viewport when painted display content extends beyond
+ * it. Width, height, and viewBox use the same coordinate scale so the display
+ * projection remains 1:1.
  *
  * @param {string} prefix
  * @param {{[name: string]: string}} rootAttributes
- * @param {{minX: number, minY: number, maxX: number, maxY: number} | null} pencilBounds
+ * @param {{minX: number, minY: number, maxX: number, maxY: number} | null} displayBounds
  * @returns {string}
  */
-function expandViewport(prefix, rootAttributes, pencilBounds) {
-  if (!pencilBounds) return prefix;
+function expandViewport(prefix, rootAttributes, displayBounds) {
+  if (!displayBounds) return prefix;
   const sourceWidth = normalizeSvgDimension(rootAttributes.width);
   const sourceHeight = normalizeSvgDimension(rootAttributes.height);
-  const minX = Math.min(0, Math.floor(pencilBounds.minX));
-  const minY = Math.min(0, Math.floor(pencilBounds.minY));
-  const maxX = Math.max(sourceWidth, Math.ceil(pencilBounds.maxX));
-  const maxY = Math.max(sourceHeight, Math.ceil(pencilBounds.maxY));
+  const minX = Math.min(0, Math.floor(displayBounds.minX));
+  const minY = Math.min(0, Math.floor(displayBounds.minY));
+  const maxX = Math.max(sourceWidth, Math.ceil(displayBounds.maxX));
+  const maxY = Math.max(sourceHeight, Math.ceil(displayBounds.maxY));
   if (
     minX === 0 &&
     minY === 0 &&
@@ -119,18 +143,7 @@ function expandViewport(prefix, rootAttributes, pencilBounds) {
     height: String(maxY - minY),
     viewBox: `${minX} ${minY} ${maxX - minX} ${maxY - minY}`,
   };
-  const svgStart = prefix.indexOf("<svg");
-  const openTagEnd = prefix.indexOf(">", svgStart);
-  if (svgStart === -1 || openTagEnd === -1) return prefix;
-  let openTag = prefix.slice(svgStart, openTagEnd + 1);
-  for (const [name, value] of Object.entries(attributes)) {
-    const pattern = new RegExp(`\\s${name}="[^"]*"`);
-    const attribute = ` ${name}="${escapeHtml(value)}"`;
-    openTag = pattern.test(openTag)
-      ? openTag.replace(pattern, attribute)
-      : `${openTag.slice(0, -1)}${attribute}>`;
-  }
-  return `${prefix.slice(0, svgStart)}${openTag}${prefix.slice(openTagEnd + 1)}`;
+  return updateSvgRootAttributes(prefix, attributes);
 }
 
 /**
@@ -144,7 +157,7 @@ function projectStoredSvgForDisplay(svg) {
   const envelope = parseStoredSvgEnvelope(svg);
   const items = parseStoredSvgItems(envelope.drawingAreaContent);
   /** @type {{minX: number, minY: number, maxX: number, maxY: number} | null} */
-  let pencilBounds = null;
+  let displayBounds = null;
   const fragments = [];
   let sourceOffset = 0;
   for (let paintOrder = 0; paintOrder < items.length; paintOrder += 1) {
@@ -156,25 +169,9 @@ function projectStoredSvgForDisplay(svg) {
     );
     if (itemOffset === -1) return svg;
     fragments.push(envelope.drawingAreaContent.slice(sourceOffset, itemOffset));
-    const projected = projectStoredSvgItemForDisplay(item);
+    const projected = projectStoredSvgItemForDisplay(item, paintOrder);
     if (projected) {
-      const canonical = canonicalItemFromStoredSvgEntry(item, paintOrder);
-      if (!canonical) {
-        fragments.push(item.raw);
-        sourceOffset = itemOffset + item.raw.length;
-        continue;
-      }
-      const effective = MessageCommon.applyTransformToBounds(
-        projected.bounds,
-        canonical.transform,
-      );
-      if (effective) {
-        const strokeWidth = Number(item.attributes["stroke-width"]);
-        pencilBounds = extendBounds(
-          pencilBounds,
-          includeStrokeBounds(effective, strokeWidth, canonical.transform),
-        );
-      }
+      displayBounds = extendBounds(displayBounds, projected.bounds);
       fragments.push(projected.raw);
     } else {
       fragments.push(item.raw);
@@ -185,7 +182,7 @@ function projectStoredSvgForDisplay(svg) {
   const prefix = expandViewport(
     envelope.prefix,
     envelope.rootAttributes,
-    pencilBounds,
+    displayBounds,
   );
   return serializeStoredSvgEnvelope(prefix, fragments, envelope.suffix);
 }

@@ -126,7 +126,7 @@ const EMPTY_PERSISTED_PENCIL_SCAN = {
 
 /**
  * @param {string | undefined} d
- * @param {boolean} [collectCanonicalPoints]
+ * @param {boolean} [collectStrictCanonicalPoints]
  * @returns {{
  *   childCount: number,
  *   localBounds: {minX: number, minY: number, maxX: number, maxY: number} | null,
@@ -134,18 +134,26 @@ const EMPTY_PERSISTED_PENCIL_SCAN = {
  *   points: {x: number, y: number}[] | null,
  * }}
  */
-function scanPersistedPencilPath(d, collectCanonicalPoints = false) {
+function scanPersistedPencilPath(d, collectStrictCanonicalPoints = false) {
   if (typeof d !== "string" || d === "") return EMPTY_PERSISTED_PENCIL_SCAN;
   const length = d.length;
   if (length < 5 || d.charCodeAt(0) !== 77 || d.charCodeAt(1) !== 32)
     return EMPTY_PERSISTED_PENCIL_SCAN;
 
   let index = 2;
-  const firstX = readCanonicalPathInteger(d, index, collectCanonicalPoints);
+  const firstX = readCanonicalPathInteger(
+    d,
+    index,
+    collectStrictCanonicalPoints,
+  );
   if (!firstX || firstX.index >= length || d.charCodeAt(firstX.index) !== 32)
     return EMPTY_PERSISTED_PENCIL_SCAN;
   index = firstX.index + 1;
-  const firstY = readCanonicalPathInteger(d, index, collectCanonicalPoints);
+  const firstY = readCanonicalPathInteger(
+    d,
+    index,
+    collectStrictCanonicalPoints,
+  );
   if (!firstY) return EMPTY_PERSISTED_PENCIL_SCAN;
   index = firstY.index;
 
@@ -158,7 +166,9 @@ function scanPersistedPencilPath(d, collectCanonicalPoints = false) {
   let childCount = 1;
   let previousDistinctX = currentX;
   let previousDistinctY = currentY;
-  const points = collectCanonicalPoints ? [{ x: currentX, y: currentY }] : null;
+  const points = collectStrictCanonicalPoints
+    ? [{ x: currentX, y: currentY }]
+    : null;
 
   while (index < length) {
     if (
@@ -170,17 +180,25 @@ function scanPersistedPencilPath(d, collectCanonicalPoints = false) {
       return EMPTY_PERSISTED_PENCIL_SCAN;
     }
     index += 3;
-    const deltaX = readCanonicalPathInteger(d, index, collectCanonicalPoints);
+    const deltaX = readCanonicalPathInteger(
+      d,
+      index,
+      collectStrictCanonicalPoints,
+    );
     if (!deltaX || deltaX.index >= length || d.charCodeAt(deltaX.index) !== 32)
       return EMPTY_PERSISTED_PENCIL_SCAN;
     index = deltaX.index + 1;
-    const deltaY = readCanonicalPathInteger(d, index, collectCanonicalPoints);
+    const deltaY = readCanonicalPathInteger(
+      d,
+      index,
+      collectStrictCanonicalPoints,
+    );
     if (!deltaY) return EMPTY_PERSISTED_PENCIL_SCAN;
     index = deltaY.index;
     currentX += deltaX.value;
     currentY += deltaY.value;
     if (
-      collectCanonicalPoints &&
+      collectStrictCanonicalPoints &&
       (!Number.isSafeInteger(currentX) || !Number.isSafeInteger(currentY))
     ) {
       return EMPTY_PERSISTED_PENCIL_SCAN;

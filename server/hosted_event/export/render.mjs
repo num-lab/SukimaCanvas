@@ -1,7 +1,5 @@
 import { Resvg } from "@resvg/resvg-js";
 
-import MessageCommon from "../../../client-data/js/message_common.js";
-import { canonicalItemFromStoredSvgEntry } from "../../board/canonical_items.mjs";
 import { normalizeSvgDimension } from "../../board/svg_extent.mjs";
 import {
   projectStoredSvgForDisplay,
@@ -79,14 +77,11 @@ function renderError(code, message) {
   return error;
 }
 
-/** Guard against pathological half-stroke spill when expanding content bounds. */
-const MAX_STROKE_SPILL = 250;
-
 /**
  * Computes the tight content bounds of a stored drawing area. Canonical item
- * summaries provide every ordinary geometry bound; Pencil paths substitute
- * the exact bounds of their smoothed display projection. Returns null when the
- * drawing area carries no drawable item at all.
+ * summaries provide ordinary geometry; Pencil paths substitute the exact
+ * bounds of their smoothed display projection. Every bound includes the
+ * transformed stroke. Returns null when the drawing area is empty.
  *
  * @param {string} drawingAreaContent
  * @returns {{minX: number, minY: number, maxX: number, maxY: number, itemCount: number} | null}
@@ -96,17 +91,10 @@ function computeArchiveContentBounds(drawingAreaContent) {
   /** @type {{minX: number, minY: number, maxX: number, maxY: number} | null} */
   let bounds = null;
   let itemCount = 0;
-  let maxStrokeWidth = 0;
   for (const entry of items) {
-    const item = canonicalItemFromStoredSvgEntry(entry, itemCount);
-    if (!item || !item.bounds) continue;
-    const localBounds =
-      projectStoredSvgItemForDisplay(entry)?.bounds || item.bounds;
-    const effective = MessageCommon.applyTransformToBounds(
-      localBounds,
-      item.transform,
-    );
-    if (!effective) continue;
+    const projected = projectStoredSvgItemForDisplay(entry, itemCount);
+    if (!projected) continue;
+    const effective = projected.bounds;
     itemCount += 1;
     bounds = {
       minX: Math.min(bounds ? bounds.minX : effective.minX, effective.minX),
@@ -114,20 +102,13 @@ function computeArchiveContentBounds(drawingAreaContent) {
       maxX: Math.max(bounds ? bounds.maxX : effective.maxX, effective.maxX),
       maxY: Math.max(bounds ? bounds.maxY : effective.maxY, effective.maxY),
     };
-    const size = Number(item.attrs?.size);
-    if (Number.isFinite(size) && size > maxStrokeWidth) {
-      maxStrokeWidth = size;
-    }
   }
   if (!bounds || itemCount === 0) return null;
-  // Strokes render half their width beyond the geometry bounds; grow the
-  // content box by that spill so the margin, not the image edge, absorbs it.
-  const spill = Math.min(maxStrokeWidth / 2, MAX_STROKE_SPILL);
   return {
-    minX: bounds.minX - spill,
-    minY: bounds.minY - spill,
-    maxX: bounds.maxX + spill,
-    maxY: bounds.maxY + spill,
+    minX: bounds.minX,
+    minY: bounds.minY,
+    maxX: bounds.maxX,
+    maxY: bounds.maxY,
     itemCount,
   };
 }
