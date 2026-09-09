@@ -26,29 +26,6 @@ async function renderStoredBoard(storedBoard) {
   return chunks.join("");
 }
 
-/**
- * @param {string} value
- * @returns {string}
- */
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/**
- * @param {{x: number, y: number}[]} points
- * @returns {string}
- */
-function renderExpectedPencilPath(points) {
-  if (!points.length) return "";
-  let path = `M ${points[0].x} ${points[0].y}`;
-  for (let i = 1; i < points.length; i += 1) {
-    const prev = points[i - 1];
-    const point = points[i];
-    path += ` l ${point.x - prev.x} ${point.y - prev.y}`;
-  }
-  return path;
-}
-
 test("renderBoard normalizes rectangle bounds for reverse-dragged shapes", async () => {
   const svg = await renderStoredBoard({
     rect1: {
@@ -72,7 +49,7 @@ test("renderBoard normalizes rectangle bounds for reverse-dragged shapes", async
   assert.doesNotMatch(svg, /height="-/);
 });
 
-test("renderBoard stores raw pencil path points for client-side smoothing", async () => {
+test("renderBoard projects pencil points into smooth SVG curves", async () => {
   const points = [
     { x: 1, y: 2 },
     { x: 10, y: 12 },
@@ -90,8 +67,9 @@ test("renderBoard stores raw pencil path points for client-side smoothing", asyn
     },
   });
 
-  const expectedPath = renderExpectedPencilPath(
-    points.map((point) => ({ x: point.x * 10, y: point.y * 10 })),
+  assert.ok(
+    svg.includes(
+      'd="M 10 20 L 10 20 C 10 20 59 103 100 120 C 126 131 162 68 180 90 C 227 147 250 300 250 300"',
+    ),
   );
-  assert.match(svg, new RegExp(`d="${escapeRegExp(expectedPath)}"`));
 });

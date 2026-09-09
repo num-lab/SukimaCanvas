@@ -247,6 +247,46 @@ test("the export render produces a white PNG at the content bounds plus margin",
   );
 });
 
+test("PNG export renders the smoothed Pencil curve", () => {
+  const frame =
+    '<rect id="frame" x="0" y="0" width="200" height="200" stroke="#ffffff" ' +
+    'stroke-width="4" fill="#ffffff"></rect>';
+  const pencil =
+    '<path id="pencil-turn" d="M 40 40 l 80 0 l 0 80" stroke="#000000" ' +
+    'stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>';
+
+  const rendered = renderArchivePng({
+    canvasSvg: archivedCanvas([frame, pencil], {
+      width: 200,
+      height: 200,
+    }),
+  });
+  assert.equal(rendered.width, 268);
+  assert.equal(rendered.height, 268);
+
+  const image = decodePngPixels(rendered.png);
+  const curvePixel = rgbAt(image, 125, 66);
+  assert.ok(
+    curvePixel.every((channel) => channel < 120),
+    `the smoothed curve covers (125, 66): ${curvePixel.join(",")}`,
+  );
+});
+
+test("Pencil bounds include transformed stroke scale and shear", () => {
+  const pencil =
+    '<path id="transformed-pencil" d="M 10 20 l 20 0" stroke="#000000" ' +
+    'stroke-width="10" fill="none" stroke-linecap="round" stroke-linejoin="round" ' +
+    'transform="matrix(3 0 4 5 0 0)"></path>';
+
+  assert.deepEqual(computeArchiveContentBounds(pencil), {
+    minX: 85,
+    minY: 75,
+    maxX: 195,
+    maxY: 125,
+    itemCount: 1,
+  });
+});
+
 test("item attribution and internal metadata never reach the rendered output", () => {
   const attributed =
     '<rect id="r1" x="120" y="80" width="120" height="80" stroke="#1f2937" ' +

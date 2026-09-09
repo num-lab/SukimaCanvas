@@ -87,6 +87,7 @@ test.describe("drawing and persistence", () => {
 
     await expect(page.locator(firstPath)).toBeVisible();
     await expect(page.locator(secondPath)).toBeVisible();
+    await expect(page.locator(secondPath)).toHaveAttribute("d", /(?:^|\s)C\s/);
     await server.waitForStoredBoard(
       server.dataPath,
       boardName,
@@ -107,10 +108,12 @@ test.describe("drawing and persistence", () => {
     await page.reload();
     await expect(page.locator(firstPath)).toBeVisible();
     await expect(page.locator(secondPath)).toBeVisible();
+    await expect(page.locator(secondPath)).toHaveAttribute("d", /(?:^|\s)C\s/);
 
     await boardPage.gotoPreview(boardName);
     await expect(page.locator(firstPath)).toBeVisible();
     await expect(page.locator(secondPath)).toBeVisible();
+    await expect(page.locator(secondPath)).toHaveAttribute("d", /(?:^|\s)C\s/);
   });
 
   test("circle persists and keeps localized label", async ({

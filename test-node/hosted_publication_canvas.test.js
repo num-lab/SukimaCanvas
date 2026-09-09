@@ -82,6 +82,36 @@ test("attribution off strips every identifier while keeping all items", () => {
   assert.ok(published.includes(">hello<"));
 });
 
+test("published pencil paths keep smoothing, attribution, and painted bounds", () => {
+  const canvas =
+    `<svg id="canvas" xmlns="http://www.w3.org/2000/svg" version="1.1" ` +
+    `width="50" height="50" data-wbo-format="whitebophir-svg-v2" ` +
+    `data-wbo-seq="7" data-wbo-readonly="true">` +
+    `<defs id="defs"></defs><g id="drawingArea">` +
+    `<path id="p1" d="M 20 20 l 30 0 l 0 30" stroke="#1f2937" ` +
+    `stroke-width="2" fill="none" stroke-linecap="round" ` +
+    `stroke-linejoin="round" data-wbo-created-by="${IDENTIFIED_ID}"></path>` +
+    `<rect id="r1" x="2" y="2" width="4" height="4" stroke="#1f2937" ` +
+    `data-wbo-created-by="${ANONYMOUS_ID}"></rect>` +
+    `</g><g id="cursors"></g></svg>`;
+
+  const published = derivePublishedCanvas({
+    archiveCanvas: canvas,
+    showAttribution: true,
+    identifiedParticipantIds: new Set([IDENTIFIED_ID]),
+  });
+
+  assert.ok(
+    published.includes(
+      'd="M 20 20 L 20 20 C 20 20 43 13 50 20 C 57 27 50 50 50 50"',
+    ),
+  );
+  assert.ok(published.includes(`data-wbo-created-by="${IDENTIFIED_ID}"`));
+  assert.ok(!published.includes(ANONYMOUS_ID));
+  assert.match(published, /width="55" height="51"/);
+  assert.match(published, /viewBox="0 0 55 51"/);
+});
+
 test("the derived canvas is read-only, keeps the extent and format, and is deterministic", () => {
   const canvas = archiveCanvas(
     [{ id: "r1", tag: "rect", createdBy: IDENTIFIED_ID }],
