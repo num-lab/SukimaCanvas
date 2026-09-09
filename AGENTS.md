@@ -449,7 +449,11 @@ for structural scans,
 item decode/encode, [svg_envelope.mjs](./server/persistence/svg_envelope.mjs)
 for root metadata and drawing-area boundaries, and
 [legacy_json_svg_migration.mjs](./server/persistence/legacy_json_svg_migration.mjs)
-for legacy JSON conversion. Persistence paths and timing are configured through
+for legacy JSON conversion. Pencil snapshots keep their canonical `M/l` sample
+paths; [svg_display_projection.mjs](./server/persistence/svg_display_projection.mjs)
+owns the display-only conversion to the browser's smoothed `C` paths for
+Published Canvas, PNG rendering, and legacy preview/download responses while
+served board baselines remain canonical. Persistence paths and timing are configured through
 `WBO_HISTORY_DIR`, `WBO_SAVE_INTERVAL`, `WBO_MAX_SAVE_DELAY`, and
 `WBO_SEQ_REPLAY_RETENTION_MS`. Board moderators are configured with
 `WBO_BOARD_MODERATORS` as space-separated `board:secret[,secret]` groups.

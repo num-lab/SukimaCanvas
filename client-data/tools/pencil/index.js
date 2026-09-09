@@ -76,9 +76,10 @@ function roundPathValue(value) {
  *
  * @param {string} d
  * @param {number} index
+ * @param {boolean} [strict]
  * @returns {{value: number, index: number} | null}
  */
-function readCanonicalPathInteger(d, index) {
+function readCanonicalPathInteger(d, index, strict = false) {
   const length = d.length;
   let next = index;
   let sign = 1;
@@ -96,7 +97,15 @@ function readCanonicalPathInteger(d, index) {
     if (next >= length) break;
     code = d.charCodeAt(next) - 48;
   }
-  return { value: sign * value, index: next };
+  const signedValue = sign * value;
+  if (
+    strict &&
+    (!Number.isSafeInteger(signedValue) ||
+      d.slice(index, next) !== String(signedValue))
+  ) {
+    return null;
+  }
+  return { value: signedValue, index: next };
 }
 
 /**
@@ -105,34 +114,38 @@ function readCanonicalPathInteger(d, index) {
  *   childCount: number,
  *   localBounds: {minX: number, minY: number, maxX: number, maxY: number} | null,
  *   lastPoint: {x: number, y: number} | null,
+ *   points: {x: number, y: number}[] | null,
  * }}
  */
 const EMPTY_PERSISTED_PENCIL_SCAN = {
   childCount: 0,
   localBounds: null,
   lastPoint: null,
+  points: null,
 };
 
 /**
  * @param {string | undefined} d
+ * @param {boolean} [collectCanonicalPoints]
  * @returns {{
  *   childCount: number,
  *   localBounds: {minX: number, minY: number, maxX: number, maxY: number} | null,
  *   lastPoint: {x: number, y: number} | null,
+ *   points: {x: number, y: number}[] | null,
  * }}
  */
-function scanPersistedPencilPath(d) {
+function scanPersistedPencilPath(d, collectCanonicalPoints = false) {
   if (typeof d !== "string" || d === "") return EMPTY_PERSISTED_PENCIL_SCAN;
   const length = d.length;
   if (length < 5 || d.charCodeAt(0) !== 77 || d.charCodeAt(1) !== 32)
     return EMPTY_PERSISTED_PENCIL_SCAN;
 
   let index = 2;
-  const firstX = readCanonicalPathInteger(d, index);
+  const firstX = readCanonicalPathInteger(d, index, collectCanonicalPoints);
   if (!firstX || firstX.index >= length || d.charCodeAt(firstX.index) !== 32)
     return EMPTY_PERSISTED_PENCIL_SCAN;
   index = firstX.index + 1;
-  const firstY = readCanonicalPathInteger(d, index);
+  const firstY = readCanonicalPathInteger(d, index, collectCanonicalPoints);
   if (!firstY) return EMPTY_PERSISTED_PENCIL_SCAN;
   index = firstY.index;
 
@@ -145,6 +158,7 @@ function scanPersistedPencilPath(d) {
   let childCount = 1;
   let previousDistinctX = currentX;
   let previousDistinctY = currentY;
+  const points = collectCanonicalPoints ? [{ x: currentX, y: currentY }] : null;
 
   while (index < length) {
     if (
@@ -156,15 +170,22 @@ function scanPersistedPencilPath(d) {
       return EMPTY_PERSISTED_PENCIL_SCAN;
     }
     index += 3;
-    const deltaX = readCanonicalPathInteger(d, index);
+    const deltaX = readCanonicalPathInteger(d, index, collectCanonicalPoints);
     if (!deltaX || deltaX.index >= length || d.charCodeAt(deltaX.index) !== 32)
       return EMPTY_PERSISTED_PENCIL_SCAN;
     index = deltaX.index + 1;
-    const deltaY = readCanonicalPathInteger(d, index);
+    const deltaY = readCanonicalPathInteger(d, index, collectCanonicalPoints);
     if (!deltaY) return EMPTY_PERSISTED_PENCIL_SCAN;
     index = deltaY.index;
     currentX += deltaX.value;
     currentY += deltaY.value;
+    if (
+      collectCanonicalPoints &&
+      (!Number.isSafeInteger(currentX) || !Number.isSafeInteger(currentY))
+    ) {
+      return EMPTY_PERSISTED_PENCIL_SCAN;
+    }
+    points?.push({ x: currentX, y: currentY });
     if (previousDistinctX === currentX && previousDistinctY === currentY) {
       continue;
     }
@@ -181,6 +202,7 @@ function scanPersistedPencilPath(d) {
     childCount,
     localBounds: { minX, minY, maxX, maxY },
     lastPoint: { x: currentX, y: currentY },
+    points,
   };
 }
 
@@ -257,6 +279,147 @@ function renderPencilPath(points) {
 }
 
 /**
+ * @param {PencilPathData} pathData
+ * @returns {string}
+ */
+function serializePencilPathData(pathData) {
+  return pathData
+    .map((segment) => `${segment.type} ${segment.values.join(" ")}`)
+    .join(" ");
+}
+
+/**
+ * @param {number} start
+ * @param {number} control1
+ * @param {number} control2
+ * @param {number} end
+ * @returns {number[]}
+ */
+function cubicExtrema(start, control1, control2, end) {
+  const quadratic = -start + 3 * control1 - 3 * control2 + end;
+  const linear = 2 * (start - 2 * control1 + control2);
+  const constant = control1 - start;
+  if (quadratic === 0) {
+    if (linear === 0) return [];
+    const root = -constant / linear;
+    return root > 0 && root < 1 ? [root] : [];
+  }
+  const discriminant = linear * linear - 4 * quadratic * constant;
+  if (discriminant < 0) return [];
+  const root = Math.sqrt(discriminant);
+  return [
+    (-linear + root) / (2 * quadratic),
+    (-linear - root) / (2 * quadratic),
+  ].filter((value) => value > 0 && value < 1);
+}
+
+/**
+ * @param {number} start
+ * @param {number} control1
+ * @param {number} control2
+ * @param {number} end
+ * @param {number} t
+ * @returns {number}
+ */
+function evaluateCubic(start, control1, control2, end, t) {
+  const remaining = 1 - t;
+  return (
+    remaining * remaining * remaining * start +
+    3 * remaining * remaining * t * control1 +
+    3 * remaining * t * t * control2 +
+    t * t * t * end
+  );
+}
+
+/**
+ * @param {PencilPathData} pathData
+ * @returns {{minX: number, minY: number, maxX: number, maxY: number} | null}
+ */
+function getPencilPathBounds(pathData) {
+  /** @type {{minX: number, minY: number, maxX: number, maxY: number} | null} */
+  let bounds = null;
+  let currentX = 0;
+  let currentY = 0;
+  /**
+   * @param {number} x
+   * @param {number} y
+   */
+  const include = (x, y) => {
+    if (!bounds) {
+      bounds = { minX: x, minY: y, maxX: x, maxY: y };
+      return;
+    }
+    bounds.minX = Math.min(bounds.minX, x);
+    bounds.minY = Math.min(bounds.minY, y);
+    bounds.maxX = Math.max(bounds.maxX, x);
+    bounds.maxY = Math.max(bounds.maxY, y);
+  };
+  for (const segment of pathData) {
+    const values = segment.values;
+    if (segment.type === "M" || segment.type === "L") {
+      if (values.length !== 2) return null;
+      const x = values[0];
+      const y = values[1];
+      if (x === undefined || y === undefined) return null;
+      currentX = x;
+      currentY = y;
+      include(currentX, currentY);
+      continue;
+    }
+    if (segment.type !== "C" || values.length !== 6) return null;
+    const [control1X, control1Y, control2X, control2Y, endX, endY] =
+      /** @type {[number, number, number, number, number, number]} */ (values);
+    include(endX, endY);
+    for (const t of cubicExtrema(currentX, control1X, control2X, endX)) {
+      include(
+        evaluateCubic(currentX, control1X, control2X, endX, t),
+        evaluateCubic(currentY, control1Y, control2Y, endY, t),
+      );
+    }
+    for (const t of cubicExtrema(currentY, control1Y, control2Y, endY)) {
+      include(
+        evaluateCubic(currentX, control1X, control2X, endX, t),
+        evaluateCubic(currentY, control1Y, control2Y, endY, t),
+      );
+    }
+    currentX = endX;
+    currentY = endY;
+  }
+  return bounds;
+}
+
+/**
+ * @param {unknown} d
+ * @returns {{d: string, bounds: {minX: number, minY: number, maxX: number, maxY: number}, pathData: PencilPathData} | null}
+ */
+function createStoredPencilProjection(d) {
+  if (typeof d !== "string") return null;
+  const points = scanPersistedPencilPath(d, true).points;
+  if (!points || points.length < 2) return null;
+  /** @type {PencilPathData} */
+  const pathData = [];
+  for (const point of points) {
+    wboPencilPoint(pathData, point.x, point.y);
+  }
+  const bounds = getPencilPathBounds(pathData);
+  if (!bounds) return null;
+  return { d: serializePencilPathData(pathData), bounds, pathData };
+}
+
+/**
+ * Projects a canonical persisted `M/l` pencil path into the same smoothed
+ * `M/L/C` representation used by the browser.
+ *
+ * @param {unknown} d
+ * @returns {{d: string, bounds: {minX: number, minY: number, maxX: number, maxY: number}} | null}
+ */
+function projectStoredPencilPath(d) {
+  const projection = createStoredPencilProjection(d);
+  if (!projection) return null;
+  return { d: projection.d, bounds: projection.bounds };
+}
+
+/**
  * @param {StoredPencilPathItem} item
  * @param {string} pathData
  * @param {StoredPencilPathSerializeHelpers} helpers
@@ -278,6 +441,7 @@ function serializeStoredPencilPath(item, pathData, helpers) {
 
 export {
   appendPersistedPencilPath,
+  projectStoredPencilPath,
   renderPencilPath,
   scanPathSummary,
   serializeStoredPencilPath,
@@ -334,7 +498,8 @@ const contract = {
     return serializeStoredPencilPath(item, pathData, helpers);
   },
   renderBoardSvg(pencil, helpers) {
-    const pathstring = renderPencilPath(pencil._children || []);
+    const storedPath = renderPencilPath(pencil._children || []);
+    const pathstring = projectStoredPencilPath(storedPath)?.d || "";
     return helpers.renderPath(pencil, pathstring);
   },
 };
@@ -810,57 +975,6 @@ function removeLocalLine(state, lineId) {
 }
 
 /**
- * Converts server-rendered canonical pencil paths back into the browser's
- * smoothed path representation. This runs on boot/normalization, not on the
- * active local input path.
- * @param {PencilState} state
- * @param {{type: string, values: number[]}[]} pathData
- * @returns {{type: string, values: number[]}[] | null}
- */
-function normalizeServerRenderedPathData(state, pathData) {
-  if (!pathData || !pathData.length) return null;
-  /** @type {{type: string, values: number[]}[]} */
-  const smoothedPathData = [];
-  let cursorX = 0;
-  let cursorY = 0;
-  let hasPoint = false;
-  for (const segment of pathData) {
-    if (
-      !segment ||
-      !Array.isArray(segment.values) ||
-      segment.values.length < 2
-    ) {
-      return null;
-    }
-    const x = Number(segment.values[segment.values.length - 2]);
-    const y = Number(segment.values[segment.values.length - 1]);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-    if (segment.type === "M") {
-      cursorX = x;
-      cursorY = y;
-      hasPoint = true;
-    } else if (segment.type === "L") {
-      if (!hasPoint) return null;
-      cursorX = x;
-      cursorY = y;
-    } else if (segment.type === "m") {
-      cursorX += x;
-      cursorY += y;
-      hasPoint = true;
-    } else if (segment.type === "l") {
-      if (!hasPoint) return null;
-      cursorX += x;
-      cursorY += y;
-    } else {
-      return null;
-    }
-    wboPencilPoint(smoothedPathData, cursorX, cursorY);
-  }
-  void state;
-  return smoothedPathData;
-}
-
-/**
  * Creates or resets the canonical board SVG path for one pencil stroke.
  * Active local strokes call this only when they are committed at the end.
  * @param {PencilState} state
@@ -1099,11 +1213,8 @@ export function cancelTouchGesture(state) {
 export function normalizeServerRenderedElement(state, line) {
   if (!(line instanceof SVGPathElement)) return;
   delete state.pathDataCache[line.id];
-  const normalizedPathData = normalizeServerRenderedPathData(
-    state,
-    getPathData(state, line),
-  );
-  if (!normalizedPathData || normalizedPathData.length === 0) {
+  const projection = createStoredPencilProjection(line.getAttribute("d"));
+  if (!projection) {
     logFrontendEvent("warn", "tool.pencil.path_normalization_failed", {
       id: line.id ?? "",
     });
@@ -1115,8 +1226,8 @@ export function normalizeServerRenderedElement(state, line) {
     }
     return;
   }
-  line.setPathData(normalizedPathData);
-  state.pathDataCache[line.id] = normalizedPathData;
+  line.setPathData(projection.pathData);
+  state.pathDataCache[line.id] = projection.pathData;
 }
 
 /**

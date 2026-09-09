@@ -2,12 +2,16 @@ import { Resvg } from "@resvg/resvg-js";
 
 import MessageCommon from "../../../client-data/js/message_common.js";
 import { canonicalItemFromStoredSvgEntry } from "../../board/canonical_items.mjs";
-import { decodePng } from "../assets/image_validation.mjs";
 import { normalizeSvgDimension } from "../../board/svg_extent.mjs";
+import {
+  projectStoredSvgForDisplay,
+  projectStoredSvgItemForDisplay,
+} from "../../persistence/svg_display_projection.mjs";
 import {
   parseStoredSvgEnvelope,
   parseStoredSvgItems,
 } from "../../persistence/svg_envelope.mjs";
+import { decodePng } from "../assets/image_validation.mjs";
 
 /**
  * Sanitized PNG rendering for Private Board Archives.
@@ -79,9 +83,9 @@ function renderError(code, message) {
 const MAX_STROKE_SPILL = 250;
 
 /**
- * Computes the tight content bounds of a stored drawing area from a summary
- * decode of its items — the sanctioned board-load decode path, so no Pencil
- * point array is hydrated just to size the image. Returns null when the
+ * Computes the tight content bounds of a stored drawing area. Canonical item
+ * summaries provide every ordinary geometry bound; Pencil paths substitute
+ * the exact bounds of their smoothed display projection. Returns null when the
  * drawing area carries no drawable item at all.
  *
  * @param {string} drawingAreaContent
@@ -96,8 +100,10 @@ function computeArchiveContentBounds(drawingAreaContent) {
   for (const entry of items) {
     const item = canonicalItemFromStoredSvgEntry(entry, itemCount);
     if (!item || !item.bounds) continue;
+    const localBounds =
+      projectStoredSvgItemForDisplay(entry)?.bounds || item.bounds;
     const effective = MessageCommon.applyTransformToBounds(
-      item.bounds,
+      localBounds,
       item.transform,
     );
     if (!effective) continue;
@@ -204,11 +210,18 @@ function renderArchivePng(input) {
       }`,
     );
   }
-  const drawingAreaContent = stripWboAttributes(envelope.drawingAreaContent);
+  /** @type {string} */
+  let drawingAreaContent;
   /** @type {ReturnType<typeof computeArchiveContentBounds>} */
   let content;
   try {
-    content = computeArchiveContentBounds(drawingAreaContent);
+    const projectedEnvelope = parseStoredSvgEnvelope(
+      projectStoredSvgForDisplay(canvasSvg),
+    );
+    drawingAreaContent = stripWboAttributes(
+      projectedEnvelope.drawingAreaContent,
+    );
+    content = computeArchiveContentBounds(envelope.drawingAreaContent);
   } catch (error) {
     throw renderError(
       EXPORT_FAILURE_CODES.ARCHIVE_INVALID,
@@ -338,9 +351,9 @@ function renderArchivePng(input) {
 }
 
 export {
+  computeArchiveContentBounds,
   EXPORT_FAILURE_CODES,
   EXPORT_MAX_EDGE_PX,
   EXPORT_PADDING_PX,
-  computeArchiveContentBounds,
   renderArchivePng,
 };

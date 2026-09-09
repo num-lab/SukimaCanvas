@@ -13,11 +13,12 @@ import {
   readStoredSvgSeq,
   streamServedBaseline,
 } from "../persistence/svg_board_store.mjs";
+import { projectStoredSvgForDisplay } from "../persistence/svg_display_projection.mjs";
 import {
   annotateBoardRequest,
-  boardPermissionsForRequest,
   boardOperationTraceAttributes,
   boardPageETag,
+  boardPermissionsForRequest,
   matchesIfNoneMatch,
   pinServedBoardBaseline,
   requireBoardPathName,
@@ -142,12 +143,13 @@ async function respondWithBoardDownload(ctx, boardName) {
       });
     },
   );
+  const displaySvg = projectStoredSvgForDisplay(data);
   ctx.response.writeHead(200, {
     "Content-Type": "image/svg+xml",
     "Content-Disposition": `attachment; filename="${boardName}.svg"`,
-    "Content-Length": data.length,
+    "Content-Length": Buffer.byteLength(displaySvg),
   });
-  ctx.response.end(data);
+  ctx.response.end(displaySvg);
 }
 
 /**
@@ -238,9 +240,11 @@ async function renderPreviewSvg(boardName, config) {
           markPreviewNotFound(boardName);
           return null;
         }
-        return await readServedBaseline(boardName, {
-          historyDir: config.HISTORY_DIR,
-        });
+        return projectStoredSvgForDisplay(
+          await readServedBaseline(boardName, {
+            historyDir: config.HISTORY_DIR,
+          }),
+        );
       } catch (error) {
         if (isNotFoundError(error)) {
           markPreviewNotFound(boardName);
