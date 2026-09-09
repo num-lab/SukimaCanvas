@@ -50,27 +50,6 @@ function serveRoot(ctx) {
 }
 
 /**
- * Serves the version-pinned Corresponding Source page in hosted mode. Legacy
- * WBO has no source disclosure, so the route rejects with a deterministic 404
- * instead of falling through to static file resolution.
- *
- * @param {HttpRouteContext} ctx
- * @returns {void | Promise<void>}
- */
-function serveSource(ctx) {
-  if (!ctx.runtime.hostedEventModule.enabled) {
-    serveError(
-      ctx.request,
-      ctx.response,
-      ctx.runtime.errorPage,
-      ctx.observed,
-    )();
-    return;
-  }
-  return ctx.runtime.hostedEventModule.serveSource(ctx);
-}
-
-/**
  * @param {HttpRouteContext} ctx
  * @returns {void}
  */
@@ -147,10 +126,9 @@ function redirectToDefaultBoard(ctx) {
 export {
   redirectToDefaultBoard,
   redirectToRandomBoard,
-  serveManifest,
-  serveRulesPage,
   serveBoardStaticAsset,
-  serveStaticAsset,
+  serveManifest,
   serveRoot,
-  serveSource,
+  serveRulesPage,
+  serveStaticAsset,
 };

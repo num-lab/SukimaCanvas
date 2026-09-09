@@ -55,7 +55,6 @@ export type HostedEventModule = {
   initialize: () => Promise<void>;
   close: () => Promise<void>;
   serveHome: HttpRouteHandler;
-  serveSource: HttpRouteHandler;
   serveRegister: HttpRouteHandler;
   serveLogin: HttpRouteHandler;
   serveVerify: HttpRouteHandler;

@@ -204,8 +204,6 @@ function requestRouteTemplate(route) {
       return "/preview/{board}";
     case "random_board":
       return "/random";
-    case "source":
-      return "/source";
     case "hosted_register":
       return "/register";
     case "hosted_login":

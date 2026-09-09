@@ -202,26 +202,12 @@ function parseStoredSvgItems(drawingAreaContent) {
 
 /**
  * @param {string} prefix
- * @param {{readonly: boolean}} metadata
- * @param {number} seq
- * @param {{width: number, height: number}=} [svgExtent]
+ * @param {{[name: string]: string}} nextAttributes
  * @returns {string}
  */
-function updateRootMetadata(prefix, metadata, seq, svgExtent) {
+function updateSvgRootAttributes(prefix, nextAttributes) {
   const root = parseSvgOpenTag(prefix);
   let openTag = prefix.slice(root.openTagStart, root.openTagEnd + 1);
-  /** @type {{[name: string]: string}} */
-  const nextAttributes = {
-    ...root.attributes,
-    "data-wbo-format": STORED_SVG_FORMAT,
-    "data-wbo-seq": String(seq),
-    "data-wbo-readonly": metadata.readonly ? "true" : "false",
-  };
-  if (svgExtent) {
-    const extent = normalizeSvgExtent(svgExtent);
-    nextAttributes.width = String(extent.width);
-    nextAttributes.height = String(extent.height);
-  }
   Object.entries(nextAttributes).forEach(([name, value]) => {
     const attributePattern = new RegExp(`\\s${name}="[^"]*"`);
     const encoded = ` ${name}="${escapeHtml(value)}"`;
@@ -232,6 +218,28 @@ function updateRootMetadata(prefix, metadata, seq, svgExtent) {
     }
   });
   return `${prefix.slice(0, root.openTagStart)}${openTag}${prefix.slice(root.openTagEnd + 1)}`;
+}
+
+/**
+ * @param {string} prefix
+ * @param {{readonly: boolean}} metadata
+ * @param {number} seq
+ * @param {{width: number, height: number}=} [svgExtent]
+ * @returns {string}
+ */
+function updateRootMetadata(prefix, metadata, seq, svgExtent) {
+  /** @type {{[name: string]: string}} */
+  const nextAttributes = {
+    "data-wbo-format": STORED_SVG_FORMAT,
+    "data-wbo-seq": String(seq),
+    "data-wbo-readonly": metadata.readonly ? "true" : "false",
+  };
+  if (svgExtent) {
+    const extent = normalizeSvgExtent(svgExtent);
+    nextAttributes.width = String(extent.width);
+    nextAttributes.height = String(extent.height);
+  }
+  return updateSvgRootAttributes(prefix, nextAttributes);
 }
 
 /**
@@ -280,4 +288,5 @@ export {
   STORED_SVG_FORMAT,
   serializeStoredSvgEnvelope,
   updateRootMetadata,
+  updateSvgRootAttributes,
 };

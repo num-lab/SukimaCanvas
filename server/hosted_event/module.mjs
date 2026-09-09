@@ -25,36 +25,22 @@ import { createFileIntegrationStore } from "./integrations/store.mjs";
 import { createFileEventMembershipStore } from "./memberships/store.mjs";
 import { createEventModeration } from "./moderation/index.mjs";
 import { createFileModerationStore } from "./moderation/store.mjs";
-import { createFileNotificationStore } from "./notifications/store.mjs";
 import { createNotificationService } from "./notifications/service.mjs";
+import { createFileNotificationStore } from "./notifications/store.mjs";
 import { createOrganizerRoutes } from "./organizers/routes.mjs";
-import { createFileWebhookStore } from "./webhooks/store.mjs";
-import { createWebhookPipeline } from "./webhooks/pipeline.mjs";
 import { createFileOrganizerStore } from "./organizers/store.mjs";
 import { createOutcomeRetentionPipeline } from "./outcomes.mjs";
 import { createFilePublicationStore } from "./publication/store.mjs";
 import { createReservationRoutes } from "./reservations/routes.mjs";
 import { createHostedStorage } from "./storage/index.mjs";
+import { createWebhookPipeline } from "./webhooks/pipeline.mjs";
+import { createFileWebhookStore } from "./webhooks/store.mjs";
 
 /** @import { HttpRequest, HttpResponse, ServerConfig } from "../../types/server-runtime.d.ts" */
 
 const { logger, metrics } = observability;
 
 const HOSTED_LANGUAGES = ["en", "zh-CN"];
-const ROLLING_VERSION_LABELS = new Set([
-  "current",
-  "default",
-  "develop",
-  "development",
-  "dev",
-  "head",
-  "latest",
-  "main",
-  "main",
-  "release",
-  "stable",
-  "trunk",
-]);
 
 class HostedPageTemplate extends Template {
   /**
@@ -75,7 +61,6 @@ class HostedPageTemplate extends Template {
    * @param {URL} parsedUrl
    * @param {HttpRequest} request
    * @param {boolean} isModerator
-   * @param {{sourceAvailable?: boolean, sourceUrl?: string, deploymentVersion?: string, sourceBuildInstructions?: string}} [extraParams]
    * @returns {import("../http/templating.mjs").TemplateParameters}
    */
   parameters(parsedUrl, request, isModerator, extraParams = {}) {
@@ -85,8 +70,7 @@ class HostedPageTemplate extends Template {
       isModerator,
       extraParams,
     );
-    const pagePath = parsedUrl.pathname === "/source" ? "source" : ".";
-    const pageUrl = new URL(pagePath, params.baseHref).href;
+    const pageUrl = new URL(".", params.baseHref).href;
     params.hostedLanguage = params.language;
     params.hostedDirection = params.direction;
     params.hostedTranslations = params.translations;
@@ -132,7 +116,6 @@ class HostedPageTemplate extends Template {
  * @param {{
  *   layoutTemplatePath: string,
  *   homeTemplatePath: string,
- *   sourceTemplatePath: string,
  *   registerTemplatePath: string,
  *   loginTemplatePath: string,
  *   verifyTemplatePath: string,
@@ -248,8 +231,8 @@ function createHostedEventModule(config, paths) {
     config,
     clock,
   });
-  // Every hosted page renders the session-aware header, including home and
-  // source, so all hosted templates share the account resolver. It also reports
+  // Every hosted page renders the session-aware header, including home, so
+  // all hosted templates share the account resolver. It also reports
   // operator status so the shared header can offer the operator console link.
   /** @type {(request: HttpRequest) => {accountId: string, email: string, isOperator: boolean} | null} */
   const resolveAccount = (request) => {
@@ -269,13 +252,6 @@ function createHostedEventModule(config, paths) {
     config,
     templateOptions,
   );
-  const sourceTemplate = new HostedPageTemplate(
-    paths.sourceTemplatePath,
-    config,
-    templateOptions,
-  );
-  const sourceMapping = resolveSourceMapping(config);
-
   // Private objects use the selected file or S3-compatible adapter. The same
   // immutable object seam owns Board Archives, publications, Brand Assets,
   // Historical Archives, and successful PNG Image Exports.
@@ -689,19 +665,6 @@ function createHostedEventModule(config, paths) {
     initialize,
     close,
     serveHome: eventRoutes.serveHome,
-    serveSource(ctx) {
-      const statusCode = sourceMapping.available ? 200 : 503;
-      sourceTemplate.serveWithStatus(ctx.request, ctx.response, statusCode, {
-        sourceAvailable: sourceMapping.available,
-        ...(sourceMapping.available
-          ? {
-              sourceUrl: sourceMapping.url,
-              deploymentVersion: sourceMapping.version,
-              sourceBuildInstructions: sourceMapping.buildInstructions,
-            }
-          : {}),
-      });
-    },
     ...accountRoutes,
     ...organizerRoutes,
     ...reservationRoutes,
@@ -749,46 +712,6 @@ function createHostedEventModule(config, paths) {
     serveOrganizerEventExportDelete:
       eventRoutes.serveOrganizerEventExportDelete,
   };
-}
-
-/**
- * @param {ServerConfig} config
- * @returns {{available: true, url: string, version: string, buildInstructions: string} | {available: false}}
- */
-function resolveSourceMapping(config) {
-  const version =
-    typeof config.DEPLOYMENT_VERSION === "string"
-      ? config.DEPLOYMENT_VERSION.trim()
-      : "";
-  const sourceUrl =
-    typeof config.CORRESPONDING_SOURCE_URL === "string"
-      ? config.CORRESPONDING_SOURCE_URL.trim()
-      : "";
-  const buildInstructions =
-    typeof config.CORRESPONDING_SOURCE_BUILD === "string"
-      ? config.CORRESPONDING_SOURCE_BUILD.trim()
-      : "";
-  if (!version || !sourceUrl || !buildInstructions) {
-    return { available: false };
-  }
-  if (ROLLING_VERSION_LABELS.has(version.toLowerCase())) {
-    return { available: false };
-  }
-  if (!sourceUrl.includes("{version}")) return { available: false };
-
-  try {
-    const renderedSourceUrl = sourceUrl
-      .split("{version}")
-      .join(encodeURIComponent(version));
-    const parsed = new URL(renderedSourceUrl);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      return { available: false };
-    }
-    if (parsed.username || parsed.password) return { available: false };
-    return { available: true, url: parsed.href, version, buildInstructions };
-  } catch {
-    return { available: false };
-  }
 }
 
 export { createHostedEventModule };

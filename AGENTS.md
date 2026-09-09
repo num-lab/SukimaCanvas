@@ -68,15 +68,12 @@ in [logging.mjs](./server/observability/logging.mjs) and metric utilities in
 
 The Hosted Event Service shell is composed into the same runtime by
 [hosted_event/module.mjs](./server/hosted_event/module.mjs). `WBO_HOSTED_MODE`
-switches the root page to the Hosted shell while preserving legacy WBO mode;
-`/source` renders the version-pinned Corresponding Source disclosure and
-returns an explicit unavailable response when deployment mapping is missing.
-Boot passes this runtime to both the HTTP handler and Socket.IO startup so
-future Hosted Event behavior has one composition seam.
-`WBO_DEPLOYMENT_VERSION`, `WBO_CORRESPONDING_SOURCE_URL` (a URL template with a
-`{version}` placeholder), and `WBO_CORRESPONDING_SOURCE_BUILD` are startup-only
-source disclosure inputs; they are intentionally not inferred from a mutable
-branch or the local working tree.
+switches the root page to the Hosted shell while preserving legacy WBO mode.
+There is no `/source` page: the source-code buttons in the board chrome and
+the hosted page footer link straight to the public project repository
+(https://github.com/Eitrous/SukimaCanvas). Boot passes this runtime to both
+the HTTP handler and Socket.IO startup so future Hosted Event behavior has
+one composition seam.
 
 Hosted durability is selected once in
 [storage/index.mjs](./server/hosted_event/storage/index.mjs). Production uses
@@ -452,7 +449,11 @@ for structural scans,
 item decode/encode, [svg_envelope.mjs](./server/persistence/svg_envelope.mjs)
 for root metadata and drawing-area boundaries, and
 [legacy_json_svg_migration.mjs](./server/persistence/legacy_json_svg_migration.mjs)
-for legacy JSON conversion. Persistence paths and timing are configured through
+for legacy JSON conversion. Pencil snapshots keep their canonical `M/l` sample
+paths; [svg_display_projection.mjs](./server/persistence/svg_display_projection.mjs)
+owns the display-only conversion to the browser's smoothed `C` paths for
+Published Canvas, PNG rendering, and legacy preview/download responses while
+served board baselines remain canonical. Persistence paths and timing are configured through
 `WBO_HISTORY_DIR`, `WBO_SAVE_INTERVAL`, `WBO_MAX_SAVE_DELAY`, and
 `WBO_SEQ_REPLAY_RETENTION_MS`. Board moderators are configured with
 `WBO_BOARD_MODERATORS` as space-separated `board:secret[,secret]` groups.

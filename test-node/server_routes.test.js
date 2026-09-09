@@ -1318,6 +1318,38 @@ test("canonical board svg endpoint serves the authoritative baseline with short 
   }
 });
 
+test("legacy SVG routes smooth pencil display projections without changing the reconnect baseline", async () => {
+  const dirs = await createServerDirs();
+  const boardName = "pencil-display-projection";
+  const canonicalPath = "M 20 20 l 30 0 l 0 30";
+  await fs.writeFile(
+    boardSvgFile(dirs.historyDir, boardName),
+    `<svg id="canvas" xmlns="http://www.w3.org/2000/svg" version="1.1" width="100" height="100" data-wbo-format="whitebophir-svg-v2" data-wbo-seq="5" data-wbo-readonly="false"><defs id="defs"></defs><g id="drawingArea"><path id="pencil-1" d="${canonicalPath}" stroke="#123456" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></g><g id="cursors"></g></svg>`,
+    "utf8",
+  );
+
+  const app = await createTestServer(
+    createServerConfig(dirs, { WEBROOT: CLIENT_WEBROOT }),
+  );
+  try {
+    const baseline = await request(app, `/boards/${boardName}.svg`);
+    const preview = await request(app, `/preview/${boardName}`);
+    const exported = await request(app, `/export/${boardName}`);
+    const download = await request(app, `/download/${boardName}`);
+
+    assert.equal(baseline.statusCode, 200);
+    assert.match(baseline.body, new RegExp(`d="${canonicalPath}"`));
+    assert.doesNotMatch(baseline.body, /<path[^>]+\sd="[^"]*\bC\b/);
+
+    for (const response of [preview, exported, download]) {
+      assert.equal(response.statusCode, 200);
+      assert.match(response.body, /<path[^>]+\sd="[^"]*\bC\b/);
+    }
+  } finally {
+    await closeServer(app);
+  }
+});
+
 test("canonical board svg endpoint remains no-store in development", async () => {
   const dirs = await createServerDirs();
   await fs.writeFile(

@@ -17,7 +17,7 @@ the product does not work.
 | `WBO_HOSTED_MODE=true` | The Hosted Event Service is off. The process serves legacy WBO instead: arbitrary boards, no events, no admission. |
 | `AUTH_SECRET_KEY` | **The process refuses to start** in hosted mode. It derives every Participant Identifier and the webhook and export-download HMACs. Treat it as permanent: rotating it changes every published attribution identifier and invalidates every outstanding export link. Store it in the platform secret store, never in the image. |
 | `WBO_HOSTED_OPERATOR_EMAILS` | No Platform Operator exists, so no Organizer Application can ever be approved and nothing downstream (reservations, events, board sessions) can be created. Comma-separated; each address must belong to an account that registers and verifies normally. |
-| `WBO_DEPLOYMENT_VERSION`, `WBO_CORRESPONDING_SOURCE_URL` (must contain `{version}`), `WBO_CORRESPONDING_SOURCE_BUILD` | `/source` fails closed with 503 and the deployment does not satisfy its AGPL Corresponding Source obligation. Pin an immutable version, never a rolling label. |
+| — | No source page exists; the source-code links point at the public project repository (https://github.com/Eitrous/SukimaCanvas). AGPL Corresponding Source remains obtainable there; deployment-specific pinning is not part of the app surface. |
 | `WBO_HOSTED_STATE_STORE=postgres`, `WBO_HOSTED_DATABASE_URL` | The production persistence profile is not selected or PostgreSQL cannot be reached. The process creates its two tables on first boot and refuses to listen when the connection, schema creation, write probe, or single-instance lock fails. |
 | `WBO_HOSTED_OBJECT_STORE=s3`, `WBO_HOSTED_S3_ENDPOINT`, `WBO_HOSTED_S3_BUCKET`, `WBO_HOSTED_S3_ACCESS_KEY_ID`, `WBO_HOSTED_S3_SECRET_ACCESS_KEY` | The production object profile is not selected or R2 is incomplete. The process refuses to listen unless a private object can be written, read back, and deleted. |
 | `NODE_ENV=production` | Development defaults stay on, including non-`Secure` session cookies. |
@@ -179,8 +179,8 @@ is needed for that.
 - Before starting the application, run `npm run check:hosted-storage` with the
   production environment. It must report both stores ready and leave no R2
   probe object behind.
-- `/source` returns 200 and names the exact immutable version just deployed.
-  A 503 means the mapping is missing or a rolling label was pinned.
+- The source-code links on the board chrome and the hosted footer point at the
+  public project repository; confirm they load after every deploy.
 - `/` serves the hosted shell (the readiness probe in `app.json` matches
   `hosted-shell` on this page).
 - Sign in as the operator and load `/operator` — this exercises the session

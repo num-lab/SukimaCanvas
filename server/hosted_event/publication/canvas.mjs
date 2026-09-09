@@ -1,3 +1,4 @@
+import { projectStoredSvgForDisplay } from "../../persistence/svg_display_projection.mjs";
 import {
   parseStoredSvgEnvelope,
   parseStoredSvgItems,
@@ -95,7 +96,12 @@ function derivePublishedCanvas(input) {
     { readonly: true },
     readRootSeq(envelope.prefix),
   );
-  return serializeStoredSvgEnvelope(prefix, itemTags, envelope.suffix);
+  const sanitizedCanvas = serializeStoredSvgEnvelope(
+    prefix,
+    itemTags,
+    envelope.suffix,
+  );
+  return projectStoredSvgForDisplay(sanitizedCanvas);
 }
 
 /**
