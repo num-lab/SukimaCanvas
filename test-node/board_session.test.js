@@ -772,3 +772,112 @@ test("replayed ledger entries restore duplicate tracking after a reload", async 
   assert.equal(processCount, 0);
   assert.equal(appended.length, 0);
 });
+
+test("sealing waits for admitted writes and ledger close before refusing later writes", async () => {
+  const { createBoardSession, WRITES_SEALED_REASON } = await loadBoardSession();
+  const appendStarted = createGate();
+  const finishAppend = createGate();
+  const closeStarted = createGate();
+  const finishClose = createGate();
+  /** @type {string[]} */
+  const steps = [];
+  let seq = 0;
+  const board = {
+    name: "event-seal-ledger",
+    getSeq: () => seq,
+    mutationLedger: {
+      async appendEntries() {
+        steps.push("append:start");
+        appendStarted.resolve();
+        await finishAppend.promise;
+        steps.push("append:done");
+      },
+      async close() {
+        steps.push("close:start");
+        closeStarted.resolve();
+        await finishClose.promise;
+        steps.push("close:done");
+      },
+    },
+    processMessage() {
+      steps.push("process");
+      return { ok: true };
+    },
+    recordPersistentMutation(/** @type {any} */ mutation) {
+      steps.push("record");
+      return { seq: ++seq, mutation };
+    },
+  };
+  const session = createBoardSession(board);
+  const mutation = {
+    tool: Rectangle.id,
+    type: MutationType.CREATE,
+    id: "before-seal",
+    clientMutationId: "before-seal",
+  };
+  const accepted = session.acceptPersistentMutation(mutation, 1, OPERATOR);
+  await appendStarted.promise;
+  let sealed = false;
+  const sealing = session.sealWrites().then(() => {
+    sealed = true;
+  });
+  const refused = session.acceptPersistentMutation(
+    { ...mutation, id: "after-seal", clientMutationId: "after-seal" },
+    2,
+    OPERATOR,
+  );
+  try {
+    assert.deepEqual(steps, ["process", "append:start"]);
+    finishAppend.resolve();
+    await closeStarted.promise;
+    assert.equal((await accepted).ok, true);
+    assert.equal(sealed, false);
+    assert.deepEqual(steps, [
+      "process",
+      "append:start",
+      "append:done",
+      "record",
+      "close:start",
+    ]);
+    finishClose.resolve();
+    await sealing;
+    assert.deepEqual(await refused, {
+      ok: false,
+      reason: WRITES_SEALED_REASON,
+    });
+    const retry = await session.acceptPersistentMutation(mutation, 3, OPERATOR);
+    assert.equal(retry.ok, true);
+    assert.equal(retry.entry.seq, 1);
+    assert.equal(seq, 1);
+    assert.equal(steps[steps.length - 1], "close:done");
+  } finally {
+    finishAppend.resolve();
+    finishClose.resolve();
+    await Promise.allSettled([accepted, sealing, refused]);
+  }
+});
+
+test("a failed ledger close keeps the session sealed", async () => {
+  const { createBoardSession, WRITES_SEALED_REASON } = await loadBoardSession();
+  const failure = new Error("close failed");
+  const session = createBoardSession({
+    name: "event-seal-close-failure",
+    mutationLedger: {
+      async close() {
+        throw failure;
+      },
+    },
+    processMessage() {
+      assert.fail("sealed session must not apply writes");
+    },
+  });
+  await assert.rejects(session.sealWrites(), failure);
+  assert.deepEqual(
+    await session.acceptPersistentMutation(
+      { tool: Rectangle.id, type: MutationType.CREATE, id: "late" },
+      1,
+      OPERATOR,
+    ),
+    { ok: false, reason: WRITES_SEALED_REASON },
+  );
+});
