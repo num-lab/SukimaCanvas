@@ -143,14 +143,40 @@ can bypass that cleanup, so the supervisor/container must terminate the
 whole application process group before restarting (runbook §6). Include
 that forced-parent-exit case in deployment validation.
 
-At the user's request, no tests or benchmarks were run for this change.
-The 235.4 s full-capacity baseline is retained as historical evidence; there
-is no post-change duration or concurrent-service measurement yet. Before
-opening registrations, run the export benchmark at 512 and 32,768 items on
-the production-shaped target, exercise timeout/child-failure recovery, and
-measure HTTP, Socket.IO, persistent writes, and lifecycle responsiveness
-while exporting. Issue 24 remains open for this validation; implementation
-alone does not establish acceptable capacity or close §7 item 3.
+Local validation resumed on 2026-09-10 against `a39a97b`, using Node
+24.15.0 on an Apple M5, 24 GiB RAM, macOS 27.0. The complete `npm test`
+passed: 717 Node tests passed, two skipped, 86 Playwright tests passed,
+and Biome passed. After adding five regressions, both export test files
+passed all 16 tests, and typecheck plus the changed-file Biome check passed.
+These cover child timeout/exit cleanup, failure codes, async retry, pass
+coalescing, and small-render HTTP/heartbeat progress. The timeout test
+advances a mock clock after a real child spawns; it does not establish
+termination timing inside an active native call. The HTTP test is a
+progress smoke check, not a latency bound.
+
+| Archived items | Current output | Export pass, three samples | Parent event-loop p99 / max |
+| --- | --- | --- | --- |
+| 512 | 7203x3083, 0.5 MiB PNG | avg 2,361.8 ms (2,343.3 / 2,347.1 / 2,394.9) | 21.9 / 22.0 ms |
+| 32,768 | 8192x7839, 20.5 MiB PNG | avg 143,089.7 ms (137,419.5 / 138,175.1 / 153,674.7) | 21.7 / 98.4 ms |
+
+Commands: `npm run bench -- export` and
+`WBO_BENCH_EXPORT_ITEMS=32768 WBO_BENCH_TIMEOUT_MS=1200000 npm run bench -- export`.
+A temporary Node preload used `monitorEventLoopDelay({ resolution: 20 })`
+and a 50 ms heartbeat in the benchmark parent only, across fixture setup
+and all three samples: 141 and 8,454 heartbeat ticks respectively. It did
+not instrument the render child. All six renders succeeded before the
+300-second per-render deadline. The historical 235.4 s result above uses
+an earlier revision/output and is not a controlled before/after speedup
+comparison. The benchmark's memory values (1.8 / 25.6 MiB transient) cover
+the parent only, excluding the child's native memory; process isolation
+does not establish a host memory cap.
+
+This local run provides evidence that full-capacity rendering no longer
+holds the parent event loop for minutes. It does not establish production
+HTTP, Socket.IO, persistent-write or lifecycle latency under concurrent
+load. Before opening registrations, repeat the capacity run on the
+production-shaped target and verify supervisor cleanup after forced parent
+exit. Issue 24 remains open for these deployment checks.
 
 ## 4. Operational signals
 
@@ -204,11 +230,11 @@ this gate on its own: run `npm run lint` before merging to `main`.
    record the measured headroom here before opening registrations.
 3. **Image Export isolation awaits capacity validation** (issue 24).
    Dedicated-process rendering, serial passes, and a five-minute hard render
-   timeout are implemented. Tests and benchmarks were deferred at the user's
-   request; the historical full-capacity baseline remains 235.4 s. Before
-   opening registrations, record post-change export duration, timeout and
-   child-failure recovery, and concurrent HTTP/Socket.IO/write/lifecycle
-   responsiveness on the production-shaped target (see §3).
+   timeout are implemented. Local tests pass; full-capacity exports average
+   143.1 s across three successful samples, with parent event-loop maximum
+   98.4 ms. Before opening registrations, validate concurrent
+   HTTP/Socket.IO/write/lifecycle responsiveness and forced-parent-exit
+   cleanup on the production-shaped target (see §3).
 4. **Production storage recovery evidence:** the PostgreSQL and Cloudflare R2
    adapters are selected and implemented, but real R2 credential preflight,
    off-host PostgreSQL base backup/WAL archiving, independent R2 backup, and
