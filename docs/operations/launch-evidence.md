@@ -111,25 +111,46 @@ count, and at capacity it is large. Measured on this machine with
 | 512 items | 7211x3096, 0.4 MiB PNG | avg 2.4 s |
 | 32,768 items (the `MAX_ITEM_COUNT` cap) | 8192x7844, 18.6 MiB PNG | avg 235.4 s (174.7 / 263.8 / 267.7) |
 
-Two consequences, both covered by open item 3 in §7:
+These are the historical synchronous-render measurements, not measurements
+of the process-isolated implementation. The old call held the main event
+loop for its whole duration: 649 ms of lag for a 652 ms render, with a
+50 ms heartbeat missing more than half its ticks. On an 8192x8192 output,
+`new Resvg(svg)` parsing took 2,422 ms at 512 items and 17,192 ms at
+4,000 items; rasterization took 65 ms and 170 ms, and PNG encoding about
+0.5 s. Process isolation does not establish a lower render duration.
 
-1. The render call in `renderArchivePng` is synchronous, so it holds the
-   event loop for its whole duration — measured at 649 ms of event-loop lag
-   for a 652 ms render, with a 50 ms heartbeat missing more than half its
-   ticks. On the single active application instance that stalls live Board
-   Sessions, Socket.IO traffic, HTTP requests, and the lifecycle pass for
-   the duration. The cost is not the rasterization: on an 8192x8192 output,
-   `new Resvg(svg)` (SVG parse) takes 2,422 ms at 512 items and 17,192 ms at
-   4,000 items, while `.render()` takes 65 ms and 170 ms and `.asPng()`
-   about 0.5 s. Parse scales at roughly 4.2 ms per item.
-2. `runDueExports` settles due jobs one at a time, so several large
-   exports queue behind each other and add up.
+The 2026-09-09 implementation moves SVG projection, parsing, rasterization,
+PNG encoding, and metadata validation to a dedicated Node child process.
+The parent enforces a five-minute deadline with `SIGKILL`, waits for child
+closure, and records `render_timeout`; abnormal child failure records
+`render_failed`. The timeout covers the child render, not archive reads,
+output storage, or total queue wait. Overlapping export passes coalesce into
+one serial runner, bounding active renders to one per pipeline; multiple
+large jobs still queue behind one another. Existing retry limits apply to
+timeouts as well.
 
-Issue 24 carries the fix and the options measured so far.
+Each child has its own libuv pool, so rendering does not reserve a slot in
+the application's pool. The parent can keep the Node default
+`UV_THREADPOOL_SIZE=4`; this change requires no pool-size increase. CPU,
+physical memory, and disk remain shared host resources: an 8192x7844 RGBA
+buffer alone is about 257 MB, before SVG parsing and encoded output. Archive
+reads, integrity hashing, result transfer, and output storage still have
+parent-process costs. Worker threads would share the process-wide libuv
+pool and would not provide the same isolation.
 
-Neither is a durability problem — jobs stay durable, idempotent, and
-retryable — but a full-capacity export blocking a shared instance for
-minutes is a capacity decision that belongs on the launch checklist.
+Normal Node process exit kills an active child. A killed or crashed parent
+can bypass that cleanup, so the supervisor/container must terminate the
+whole application process group before restarting (runbook §6). Include
+that forced-parent-exit case in deployment validation.
+
+At the user's request, no tests or benchmarks were run for this change.
+The 235.4 s full-capacity baseline is retained as historical evidence; there
+is no post-change duration or concurrent-service measurement yet. Before
+opening registrations, run the export benchmark at 512 and 32,768 items on
+the production-shaped target, exercise timeout/child-failure recovery, and
+measure HTTP, Socket.IO, persistent writes, and lifecycle responsiveness
+while exporting. Issue 24 remains open for this validation; implementation
+alone does not establish acceptable capacity or close §7 item 3.
 
 ## 4. Operational signals
 
@@ -181,10 +202,13 @@ this gate on its own: run `npm run lint` before merging to `main`.
    documented capacity procedure (runbook §4) with 20 concurrent live
    sessions / 1,000 provisioned seats on the target infrastructure and
    record the measured headroom here before opening registrations.
-3. **Image Export blocks the shared instance** (issue 24). The performance
-   work is deliberately deferred until after the production-shaped deployment
-   test. Before opening registrations, choose and record an async render,
-   worker/process isolation, cheaper parsing, or an enforceable export limit.
+3. **Image Export isolation awaits capacity validation** (issue 24).
+   Dedicated-process rendering, serial passes, and a five-minute hard render
+   timeout are implemented. Tests and benchmarks were deferred at the user's
+   request; the historical full-capacity baseline remains 235.4 s. Before
+   opening registrations, record post-change export duration, timeout and
+   child-failure recovery, and concurrent HTTP/Socket.IO/write/lifecycle
+   responsiveness on the production-shaped target (see §3).
 4. **Production storage recovery evidence:** the PostgreSQL and Cloudflare R2
    adapters are selected and implemented, but real R2 credential preflight,
    off-host PostgreSQL base backup/WAL archiving, independent R2 backup, and

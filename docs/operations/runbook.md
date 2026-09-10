@@ -161,6 +161,12 @@ section covers the constraints that hold for every deploy afterwards.
   poker seal), stop, deploy the pinned version, start. The durable task
   queues catch up through the persisted times; the lifecycle poker and
   every pipeline are idempotent catch-ups, not timers.
+- **Export child cleanup:** configure the supervisor/container to terminate
+  the entire application process group on stop or crash (for systemd, use
+  `KillMode=control-group`). Normal Node process exit kills an active render
+  child, but `SIGKILL` or a runtime crash can bypass that hook; group cleanup
+  must finish before restart so an orphan render cannot overlap the new
+  instance's export runner.
 - **Source disclosure:** there is no `/source` page; the source-code links
   on the board chrome and the hosted footer point at the public project
   repository (https://github.com/Eitrous/SukimaCanvas). Verify after every

@@ -537,7 +537,7 @@ into an ordinary PNG — white background, content bounds plus margin, longest
 edge capped at 8192 px — whose chunks are checked against a strict allowlist
 so attribution, Participant Identifiers, audit data, or object keys can never
 appear in the output. Oversized or unrenderable content fails deterministically
-(`archive_unavailable`, `archive_invalid`, `render_failed`,
+(`archive_unavailable`, `archive_invalid`, `render_failed`, `render_timeout`,
 `output_limit_exceeded`, `output_metadata_rejected`, `storage_write_failed`).
 Job records live in the selected state store and successful PNG bytes under
 `image-exports/` in the selected object store via
@@ -545,8 +545,14 @@ Job records live in the selected state store and successful PNG bytes under
 restarts (`processing` jobs are re-queued), retry failed renders up to three
 attempts paced by `WBO_HOSTED_BOARD_EXPORT_RETRY_MS`, and then stay settled —
 repeated passes never re-run succeeded work. Export passes are kicked on the
-lifecycle-poker cadence but detached: rendering can take seconds, so no
-request path ever blocks on it. The download route
+lifecycle-poker cadence but detached, with overlapping passes coalesced into
+one serial runner. The full SVG projection, parsing, rasterization, PNG
+encoding, and metadata validation run in a dedicated Node child process.
+The parent enforces a five-minute render deadline with `SIGKILL`, waits for
+the child to close, and records `render_timeout`; abnormal child failures
+record `render_failed`. The child has its own libuv pool; archive reads and
+output storage remain parent-process I/O. See launch evidence §3 for shared
+host resource limits and pending capacity validation. The download route
 (`GET /organizers/{organizerId}/events/{eventId}/exports/{exportId}/download`)
 requires an authorized Owner/Admin session plus an HMAC-derived token; links
 are valid for `WBO_HOSTED_BOARD_EXPORT_LINK_TTL_MS` (24 h) and die immediately
