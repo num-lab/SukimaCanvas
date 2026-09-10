@@ -245,6 +245,7 @@ export function createBoardSession(board) {
     sealWrites() {
       return queue.runExclusive(async () => {
         writesSealed = true;
+        await board.mutationLedger?.close?.();
       });
     },
     async acceptPersistentMutation(mutation, nowMs = Date.now(), operator) {

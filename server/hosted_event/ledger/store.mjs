@@ -87,6 +87,7 @@ function parseLedgerLine(line) {
  *   dataDir: string,
  * }} dependencies
  * @returns {{
+ *   close: () => Promise<void>,
  *   appendEntries: (entries: LedgerEntry[]) => Promise<void>,
  *   readEntriesAfter: (fromExclusiveSeq: number) => Promise<LedgerEntry[]>,
  * }}
@@ -100,13 +101,14 @@ function createFileBoardMutationLedger(dependencies) {
   const ledgerPath = path.join(ledgerDir, `${boardName}.jsonl`);
   /** @type {fs.promises.FileHandle | null} */
   let appendHandle = null;
+  let closed = false;
+  /** @type {Promise<void> | null} */
+  let closePromise = null;
   /** @type {Promise<void>} */
   let tail = Promise.resolve();
 
   /**
-   * Serializes file appends so overlapping board instances cannot interleave
-   * writes. The board session serializes acceptances per instance; this queue
-   * covers the rare drop-and-reload overlap between instances.
+   * Serializes appends and close within this adapter instance.
    *
    * @template T
    * @param {() => Promise<T>} operation
@@ -196,6 +198,7 @@ function createFileBoardMutationLedger(dependencies) {
    * @returns {Promise<void>}
    */
   async function appendEntries(entries) {
+    if (closed) throw new Error("Mutation ledger is closed");
     if (!Array.isArray(entries) || entries.length === 0) return;
     for (const entry of entries) {
       if (!isValidLedgerEntry(entry)) {
@@ -255,7 +258,23 @@ function createFileBoardMutationLedger(dependencies) {
     return entries;
   }
 
-  return { appendEntries, readEntriesAfter };
+  /**
+   * Refuses new appends immediately, then releases the handle after queued
+   * appends settle. Reads remain available for archive and recovery.
+   * @returns {Promise<void>}
+   */
+  function close() {
+    closed = true;
+    closePromise ??= enqueue(async () => {
+      if (appendHandle) {
+        await appendHandle.close();
+        appendHandle = null;
+      }
+    });
+    return closePromise;
+  }
+
+  return { appendEntries, readEntriesAfter, close };
 }
 
 /**
@@ -263,9 +282,8 @@ function createFileBoardMutationLedger(dependencies) {
  * Session, when the outcome-retention pipeline purges the event's outcomes.
  * Refuses unsafe board names exactly like the adapter constructor; a missing
  * file is already gone, so the delete is a no-op success and a purge that
- * crashed mid-way replays idempotently. An adapter instance that still holds
- * an open append handle keeps it: sealed sessions refuse writes, so a deleted
- * file is never re-created by a live append.
+ * crashed mid-way replays idempotently. Sealing a session closes its append handle
+ * and refuses further writes before retention can delete the file.
  *
  * @param {{
  *   boardName: string,

@@ -462,7 +462,10 @@ The durable mutation ledger reaches its selected adapter through the factory
 seam in [ledger_registry.mjs](./server/board/ledger_registry.mjs). Production
 stores ordered rows in PostgreSQL `wbo_board_mutation_ledger`; the file
 fallback in [hosted_event/ledger/](./server/hosted_event/ledger/) stores one
-JSONL file per board. Every entry carries `seq`, `acceptedAtMs`, `eventId`,
+JSONL file per board. Its terminal `close()` drains queued appends and releases
+the append handle; later appends reject while reads remain available. Board
+disposal (including registry eviction) and the session write seal close the
+ledger. Adapters without per-board resources may omit `close`. Every entry carries `seq`, `acceptedAtMs`, `eventId`,
 `boardSessionId`, the internal `accountId`, and the full attributed mutation.
 
 Board Session closing is owned by the close pipeline in

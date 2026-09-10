@@ -2,7 +2,7 @@
  * Composition seam for per-board durable mutation ledgers.
  *
  * The board layer only knows the ledger contract (appendEntries,
- * readEntriesAfter, trimBefore). The Hosted Event Module registers a factory
+ * readEntriesAfter, optional close). The Hosted Event Module registers a factory
  * at composition time, so hosted boards get a ledger while legacy boards keep
  * today's in-memory-only behavior. Keeping the seam here avoids making the
  * board data layer depend on hosted modules.
@@ -10,6 +10,7 @@
 
 /**
  * @typedef {{
+ *   close?: () => Promise<void>,
  *   appendEntries: (entries: import("../hosted_event/ledger/store.mjs").LedgerEntry[]) => Promise<void>,
  *   readEntriesAfter: (fromExclusiveSeq: number) => Promise<import("../hosted_event/ledger/store.mjs").LedgerEntry[]>,
  * }} BoardMutationLedger
