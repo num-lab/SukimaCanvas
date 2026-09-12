@@ -28,7 +28,13 @@ function setLoadedBoard(boardName, board) {
  * @returns {void}
  */
 function deleteLoadedBoard(boardName) {
+  const board = loadedBoards.get(boardName);
   loadedBoards.delete(boardName);
+  // Rejected loads have no usable instance; dispose handles close failures.
+  void board?.then(
+    (loaded) => loaded.dispose(),
+    () => {},
+  );
 }
 
 /**
@@ -160,7 +166,7 @@ function discardPinnedReplayBaselinesBefore(
  * @returns {void}
  */
 function resetBoardRegistry() {
-  loadedBoards.clear();
+  for (const boardName of loadedBoards.keys()) deleteLoadedBoard(boardName);
   replayPinsByBoard.clear();
 }
 

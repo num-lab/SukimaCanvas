@@ -228,22 +228,26 @@ async function seedBoardHistory(input) {
     dataDir: input.hosted.dataDir,
   });
   const acceptedFrom = input.hosted.holder.now;
-  await ledger.appendEntries(
-    Array.from({ length: input.entryCount }, (_, index) => ({
-      seq: index + 1,
-      acceptedAtMs: acceptedFrom + index,
-      eventId: input.session.eventId,
-      boardSessionId: input.session.boardSessionId,
-      accountId: OWNER_ACCOUNT_ID,
-      mutation: /** @type {any} */ ({
-        tool: Pencil.id,
-        type: MutationType.APPEND,
-        parent: input.pencilIds[index % input.pencilIds.length],
-        x: (index * 13) % 8000,
-        y: (index * 17) % 8000,
-      }),
-    })),
-  );
+  try {
+    await ledger.appendEntries(
+      Array.from({ length: input.entryCount }, (_, index) => ({
+        seq: index + 1,
+        acceptedAtMs: acceptedFrom + index,
+        eventId: input.session.eventId,
+        boardSessionId: input.session.boardSessionId,
+        accountId: OWNER_ACCOUNT_ID,
+        mutation: /** @type {any} */ ({
+          tool: Pencil.id,
+          type: MutationType.APPEND,
+          parent: input.pencilIds[index % input.pencilIds.length],
+          x: (index * 13) % 8000,
+          y: (index * 17) % 8000,
+        }),
+      })),
+    );
+  } finally {
+    await ledger.close();
+  }
 }
 
 /**

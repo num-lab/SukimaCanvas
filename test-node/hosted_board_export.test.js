@@ -628,6 +628,86 @@ test("the export pipeline renders the sealed archive exactly once and never re-r
   );
 });
 
+test("overlapping export passes share one renderer and recover from async failure", {
+  timeout: 30_000,
+}, async () => {
+  await createSocketScenario(
+    { historyDirPrefix: "wbo-export-overlap-" },
+    async (scenario) => {
+      const fixture = await createFixture(Date.now(), {
+        config: scenario.sockets.__config,
+      });
+      const holder = fixture.holder;
+      holder.now = fixture.boardSession.endsAtMs + MINUTE;
+      await fixture.hostedModule.refreshEventLifecycle();
+      const exportStore = createFileBoardExportStore({
+        dataDir: fixture.dataDir,
+        clock: () => holder.now,
+        linkTtlMs: DAY,
+        hmacKey: "export-test-secret",
+      });
+      let signalStarted = () => {};
+      const started = new Promise((resolve) => {
+        signalStarted = () => resolve(undefined);
+      });
+      /** @type {(error: Error) => void} */
+      let rejectRender = () => {};
+      const rendering = new Promise((_resolve, reject) => {
+        rejectRender = reject;
+      });
+      let renderCalls = 0;
+      const pipeline = createBoardExportPipeline({
+        exportStore,
+        archiveStore: fixture.archiveStore,
+        organizerStore: fixture.organizerStore,
+        config: scenario.sockets.__config,
+        clock: () => holder.now,
+        renderArchivePng: async (input) => {
+          renderCalls += 1;
+          if (renderCalls === 1) {
+            signalStarted();
+            await rendering;
+          }
+          return renderArchivePng(input);
+        },
+      });
+      const requested = await pipeline.requestExport({
+        boardSessionId: fixture.boardSession.boardSessionId,
+        eventId: fixture.event.eventId,
+        organizerId: fixture.event.organizerId,
+        requestedByAccountId: fixture.owner.accountId,
+      });
+      assert.ok(requested.ok);
+      const first = pipeline.runDueExports();
+      await started;
+      const overlapping = pipeline.runDueExports();
+      assert.equal(overlapping, first, "lifecycle kicks join the active pass");
+      assert.equal(renderCalls, 1);
+      rejectRender(
+        Object.assign(new Error("renderer timed out"), {
+          code: "render_timeout",
+        }),
+      );
+      const failed = await first;
+      assert.deepEqual(failed.failed, [
+        { exportId: requested.export.exportId, code: "render_timeout" },
+      ]);
+      const record = exportStore.getExport(requested.export.exportId);
+      assert.equal(record?.status, "failed");
+      assert.equal(record?.attempts, 1);
+      assert.equal(record?.failure?.code, "render_timeout");
+      holder.now += MINUTE;
+      const retried = await pipeline.runDueExports({ retryMs: 0 });
+      assert.deepEqual(retried.succeeded, [requested.export.exportId]);
+      assert.equal(renderCalls, 2);
+      assert.equal(
+        exportStore.getExport(requested.export.exportId)?.attempts,
+        2,
+      );
+    },
+  );
+});
+
 test("failed exports retry inside the attempt budget and then stay settled", async () => {
   await createSocketScenario(
     { historyDirPrefix: "wbo-export-retry-" },

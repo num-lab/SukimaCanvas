@@ -7,11 +7,11 @@
 **Status:** ready-for-agent
 
 - [ ] 渲染期间事件循环不再被长时间占用：满容量归档导出时，实时 Board Session、Socket.IO 流量、HTTP 请求和生命周期扫描保持可服务。
-- [ ] 渲染不与持久写争抢同一 I/O 能力，或该竞争被显式界定并记录（libuv 线程池占用、`UV_THREADPOOL_SIZE` 取值）。
-- [ ] 给出满容量（32,768 items）导出的处置结论：可接受时长、可导出归档规模上限，或单次导出的硬超时与强制中止手段。
-- [ ] `npm run bench -- export` 的基线在改动前后记录；`WBO_BENCH_EXPORT_ITEMS` 用于满容量测量。
-- [ ] 现有导出契约不变：净化输出、metadata 白名单、确定性失败码、幂等与重启恢复、授权下载与撤销。
-- [ ] `docs/operations/launch-evidence.md` §3 与 §7 第 3 条按结论更新。
+- [x] 渲染不与持久写争抢同一 I/O 能力，或该竞争被显式界定并记录（libuv 线程池占用、`UV_THREADPOOL_SIZE` 取值）。
+- [x] 给出满容量（32,768 items）导出的处置结论：可接受时长、可导出归档规模上限，或单次导出的硬超时与强制中止手段。
+- [x] `npm run bench -- export` 的基线在改动前后记录；`WBO_BENCH_EXPORT_ITEMS` 用于满容量测量。
+- [x] 现有导出契约不变：净化输出、metadata 白名单、确定性失败码、幂等与重启恢复、授权下载与撤销。
+- [x] `docs/operations/launch-evidence.md` §3 与 §7 第 3 条按结论更新。
 
 ## Comments
 
@@ -32,3 +32,14 @@
   - worker thread / 独立进程：同时隔离事件循环与 libuv 池，并且是唯一能对跑飞渲染硬超时强杀的手段；内存也隔离（8192×7844 的 RGBA 约 257 MB）。代价是生命周期管理与跨边界搬运（SVG 进 ~4 MiB、PNG 出 18.6 MiB）。
 - 未验证但值得先测的方向：解析开销可能由文本元素的字体匹配主导（`loadSystemFonts: true` 在解析期逐元素匹配，测量用的 fixture 有三分之一是 text）。若成立，`loadSystemFonts: false` 加内置字体列表可能直接降低数量级，比换线程模型更划算。任何线程方案都只是让导出不再拖垮别人，不会让它变快。
 - 2026-09-07（user decision）：本票保持 `ready-for-agent`，暂不实施。先补全项目与 PostgreSQL/R2/SMTP 接线，在服务器完成生产形态测试，再以该测试基线处理性能；公开注册前仍需完成或落实可执行的导出规模限制。
+
+- 2026-09-09（implementation）：按用户本次指令实施独立 Node 子进程渲染，暂不编写或运行测试，也不运行基准。SVG 投影、解析、栅格化、PNG 编码和 metadata 验证均移入子进程；父进程在 5 分钟渲染截止时间到达后发送 `SIGKILL`，等待子进程关闭后记录 `render_timeout`，其他子进程异常记录 `render_failed`。该时限不包含归档读取、结果存储及排队时间，现有失败重试预算继续适用。重叠导出 pass 合并为同一串行 runner，每个 pipeline 同时最多一个渲染子进程。
+- I/O 边界：独立进程拥有独立 libuv 池，父进程无需调整 `UV_THREADPOOL_SIZE`（Node 默认 4）。归档读取、完整性哈希、结果传输和输出存储仍有父进程开销，CPU、物理内存和磁盘仍由同一主机共享。更正上方候选方案描述：worker thread 共享进程级 libuv 池，不能提供独立进程的池隔离。
+- 保留现有字体加载、净化输出、metadata 白名单、授权下载、撤销及持久任务重试/恢复机制；这些契约尚未针对新执行边界运行回归验证。满容量历史平均 235.4 s 保留，不代表新实现耗时，也不足以证明 5 分钟内必然成功。
+- 验收保持未完成：后续需补充 512/32,768 items 改动后基准、超时与子进程异常恢复验证，以及生产形态下并发 HTTP、Socket.IO、持久写和生命周期扫描的响应测量；届时再勾选相应验收项并关闭本票。`docs/operations/launch-evidence.md` §3 与 §7 第 3 条已同步记录实现边界及待验证项。
+- 部署边界：正常 Node 进程退出会强杀活动渲染子进程，但父进程被 `SIGKILL` 或崩溃时退出钩子可能不执行。supervisor/container 必须在停止或崩溃恢复时终止整个应用进程组（systemd 使用 `KillMode=control-group`），清理完成后再启动新实例；已补入 runbook §6，强制结束父进程后的子进程清理仍待部署验证。
+
+- 2026-09-10（local validation）：用户授权恢复测试。`npm test` 全部通过：Node 717 passed / 2 skipped / 0 failed，Playwright 86 passed，Biome 通过。独立运行的原导出专项 11 项全通过。
+- 同日基准（`a39a97b`，Apple M5 / 24 GiB / macOS 27.0 / Node 24.15.0）：512 items 三次 2343.3 / 2347.1 / 2394.9 ms，平均 2361.8 ms；32,768 items 三次 137419.5 / 138175.1 / 153674.7 ms，平均 143089.7 ms，输出 8192×7839 / 20.5 MiB。六次均成功，未触发 300s 渲染截止。历史 235.4s 属于较早版本与不同输出，不能据此断言隔离本身带来加速。
+- 基准父进程使用20ms分辨率 `monitorEventLoopDelay` 和50ms心跳（包含fixture准备与三次样本，未注入子进程）：512 items P99 21.9ms / max 22.0ms / 141 ticks；满容量 P99 21.7ms / max 98.4ms / 8454 ticks。说明本机满容量渲染不再连续阻塞父事件循环数分钟；不替代生产HTTP/Socket.IO/持久写/生命周期并发负载验收。生产进程组清理与并发容量验证仍待完成。
+- 新增回归测试5项后，`WBO_SILENT=true node --test test-node/hosted_board_export_process.test.js test-node/hosted_board_export.test.js` 共16项全部通过（10.4s）：真实子进程spawn后的超时SIGKILL、退出hook清理与下一次成功渲染；异常子进程死亡；IPC确定性失败码；小规模渲染期间HTTP和心跳进展；重叠pass合并、异步失败持久记录与重试恢复。超时测试通过mock时钟推进截止时间，不声称覆盖已进入native渲染后的强杀；HTTP用例仅为进展基础检查。`npm run typecheck` 与修改测试文件的Biome检查通过。

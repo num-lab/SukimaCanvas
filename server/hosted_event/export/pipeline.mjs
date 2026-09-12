@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 import observability from "../../observability/index.mjs";
-import { renderArchivePng } from "./render.mjs";
+import { renderArchivePngInChildProcess } from "./render_process.mjs";
 
 const { logger, metrics } = observability;
 
@@ -28,7 +28,7 @@ const { logger, metrics } = observability;
  *   organizerStore: ReturnType<typeof import("../organizers/store.mjs").createFileOrganizerStore>,
  *   config: import("../../../types/server-runtime.d.ts").ServerConfig,
  *   clock?: () => number,
- *   renderArchivePng?: typeof import("./render.mjs").renderArchivePng,
+ *   renderArchivePng?: typeof import("./render.mjs").renderArchivePng | typeof renderArchivePngInChildProcess,
  * }} BoardExportPipelineDependencies
  */
 
@@ -100,7 +100,8 @@ function createBoardExportPipeline(dependencies) {
   const exportStore = dependencies.exportStore;
   const archiveStore = dependencies.archiveStore;
   const organizerStore = dependencies.organizerStore;
-  const render = dependencies.renderArchivePng || renderArchivePng;
+  const render =
+    dependencies.renderArchivePng || renderArchivePngInChildProcess;
   const clock = dependencies.clock || (() => Date.now());
   // Captured once at composition, never re-read per job.
   const exportRetryMs =
@@ -243,7 +244,7 @@ function createBoardExportPipeline(dependencies) {
    */
   async function processOne(job) {
     const canvasSvg = await readVerifiedArchiveCanvas(job);
-    const rendered = render({ canvasSvg });
+    const rendered = await render({ canvasSvg });
     const stored = await exportStore.markExportSucceeded({
       exportId: job.exportId,
       bytes: rendered.png,
@@ -267,7 +268,7 @@ function createBoardExportPipeline(dependencies) {
    * @param {{now?: number, retryMs?: number}} [input]
    * @returns {Promise<{succeeded: string[], failed: {exportId: string, code: string}[]}>}
    */
-  async function runDueExports(input = {}) {
+  async function runExportPass(input = {}) {
     const now = typeof input.now === "number" ? input.now : clock();
     const due = exportStore.listDueExports({
       now,
@@ -340,6 +341,19 @@ function createBoardExportPipeline(dependencies) {
       }
     }
     return { succeeded, failed };
+  }
+
+  /** @type {ReturnType<typeof runExportPass> | null} */
+  let activePass = null;
+
+  /** @param {{now?: number, retryMs?: number}} [input] */
+  function runDueExports(input = {}) {
+    // Coalesce overlapping lifecycle kicks, including jobs queued mid-render.
+    // A later pass picks up new jobs without spawning concurrent renderers.
+    activePass ||= runExportPass(input).finally(() => {
+      activePass = null;
+    });
+    return activePass;
   }
 
   return { requestExport, runDueExports };

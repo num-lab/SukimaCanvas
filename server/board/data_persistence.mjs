@@ -224,8 +224,17 @@ function disposeBoard(board) {
   if (logger.isEnabled("debug")) {
     logger.debug("board.disposed", boardLogFields(board));
   }
+  if (board.disposed) return;
   board.disposed = true;
   clearSaveTimeout(board);
+  void getBoardSession(board)
+    .sealWrites()
+    .catch((error) => {
+      logger.error("board.ledger_close_failed", {
+        ...boardLogFields(board),
+        error,
+      });
+    });
 }
 
 /**

@@ -4,13 +4,13 @@
 
 **Blocked by:** 11 — Board Item 创建归属与耐久 Mutation Ledger
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 账本适配器提供释放句柄的方式，且在 Board 实例被丢弃（registry 驱逐、`dispose`、关闭后不再使用）时被调用。
-- [ ] 关闭与进行中的 append 有序：已排队的 append 要么在关闭前完成，要么确定性失败，不得出现写入丢失或半行。
-- [ ] 关闭后再次 append 能重新打开句柄或确定性失败，不得静默丢弃已接受的写入。
-- [ ] 长时间运行不再累积文件描述符；运行 `npm run bench:archive` 不再出现 `Closing a FileHandle object on garbage collection is deprecated` 警告。
-- [ ] Node 测试覆盖：句柄释放后账本内容完整可读、重启恢复不受影响、torn tail 修复逻辑不受影响。
+- [x] 账本适配器提供释放句柄的方式，且在 Board 实例被丢弃（registry 驱逐、`dispose`、关闭后不再使用）时被调用。
+- [x] 关闭与进行中的 append 有序：已排队的 append 要么在关闭前完成，要么确定性失败，不得出现写入丢失或半行。
+- [x] 关闭后再次 append 能重新打开句柄或确定性失败，不得静默丢弃已接受的写入。
+- [x] 长时间运行不再累积文件描述符；运行 `npm run bench:archive` 不再出现 `Closing a FileHandle object on garbage collection is deprecated` 警告。
+- [x] Node 测试覆盖：句柄释放后账本内容完整可读、重启恢复不受影响、torn tail 修复逻辑不受影响。
 
 ## Comments
 
@@ -19,3 +19,7 @@
 - 生产影响：一个接受过写入的 Board 对应一个句柄，直到实例被 GC。单活跃实例连续承办活动时，fd 随已办场次累积；默认 fd 上限下，约上千场后触及上限，表现为无法打开文件——会同时打到快照保存、归档写入和账本 append。
 - 注意 `deleteBoardMutationLedgerFile` 的注释已经意识到"仍持有 open append handle 的适配器实例会保留它"，但那是在讲删除的幂等性，不是句柄生命周期。
 - 设计注意点：`appendEntries` 通过 `enqueue` 串行化，`ensureAppendBoundary` 的修复结果缓存在 `appendBoundary` 上。关闭必须走同一条队列，否则会和进行中的 fsync 竞争；重新打开时 append boundary 的修复语义也要重新考虑。
+
+- 2026-09-10（agent）：已实现幂等、终止式 `close()`，通过 append 队列释放句柄；关闭后的追加明确拒绝，读取保持可用。Board dispose、registry 驱逐、归档 sealWrites 和基准脚本独立账本均接入释放。按用户要求，本次不编写或运行测试，也暂缓基准运行；长时间 fd 与 archive 警告验证、Node 回归覆盖仍待完成。
+
+- 2026-09-10（agent）：用户授权后补齐 9 项回归测试，覆盖真实文件句柄释放、进行中的 fsync 与排队 append、关闭后拒绝追加、重新加载继续写入、fsync 失败后关闭、128 个连续账本生命周期，以及 Board dispose/registry 驱逐/reset 和 session seal；既有 torn tail 测试也在关闭后重新加载验证。`npm test` 通过（Node：731 通过、2 跳过；Playwright：86 通过；Biome：389 文件通过），`npm run typecheck` 通过。`npm run bench:archive` 三次耗时 107.4/115.0/135.9 ms，未出现 FileHandle GC 关闭或 DEP0137 警告。fd 验证为 128 次连续生命周期回归，未进行多日运行压测。双轴审查发现的测试门闩异常清理问题已修复，相关单文件测试重新通过。

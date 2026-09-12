@@ -132,7 +132,7 @@ const EVENT_AUDIT_ACTION_KEYS = {
  *   publicationStore: ReturnType<typeof import("../publication/store.mjs").createFilePublicationStore>,
  *   archiveStore: ReturnType<typeof import("../archive/store.mjs").createFileBoardArchiveStore>,
  *   participantIdentifierFor: (eventId: string, accountId: string) => string,
- *   createBoardMutationLedger?: (boardName: string) => ReturnType<typeof createFileBoardMutationLedger>,
+ *   createBoardMutationLedger?: (boardName: string) => import("../../board/ledger_registry.mjs").BoardMutationLedger,
 
  *   exportStore: ReturnType<typeof import("../export/store.mjs").createFileBoardExportStore>,
  *   exportPipeline: ReturnType<typeof import("../export/pipeline.mjs").createBoardExportPipeline>,
